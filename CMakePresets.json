@@ -1,0 +1,46 @@
+{
+	"version": 3,
+	"configurePresets": [
+		{
+			"name": "base",
+			"hidden": true,
+			"generator": "Ninja",
+			"binaryDir": "${sourceDir}/build/${presetName}"
+		},
+		{
+			"name": "dev",
+			"inherits": "base",
+			"cacheVariables": {
+				"CMAKE_BUILD_TYPE": "Debug",
+				"PERDU_BUILD_TESTS": "ON",
+				"PERDU_BUILD_EXAMPLES": "ON"
+			}
+		},
+		{
+			"name": "release",
+			"inherits": "base",
+			"cacheVariables": {
+				"CMAKE_BUILD_TYPE": "Release",
+				"PERDU_BUILD_TESTS": "OFF",
+				"PERDU_BUILD_EXAMPLES": "ON"
+			}
+		}
+	],
+	"buildPresets": [
+		{
+			"name": "dev",
+			"configurePreset": "dev"
+		},
+		{
+			"name": "release",
+			"configurePreset": "release"
+		}
+	],
+	"testPresets": [
+		{
+			"name": "dev",
+			"configurePreset": "dev",
+			"output": { "outputOnFailure": true }
+		}
+	]
+}
