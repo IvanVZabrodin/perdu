@@ -1,6 +1,6 @@
 #pragma once
 
-#include "perdu/app/scene.hpp"
+#include "perdu/engine/scene.hpp"
 
 #include <entt/entt.hpp>
 #include <entt/meta/resolve.hpp>

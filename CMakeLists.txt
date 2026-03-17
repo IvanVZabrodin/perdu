@@ -19,11 +19,13 @@ option(PERDU_BUILD_EXAMPLES "Build example apps"    ON)
 
 include(cmake/CompilerOptions.cmake)
 include(cmake/FetchDependencies.cmake)
+include(cmake/CompileShaders.cmake)
 
 add_subdirectory(src/core)
 add_subdirectory(src/ecs)
 add_subdirectory(src/components)
 add_subdirectory(src/renderer)
+add_subdirectory(src/engine)
 add_subdirectory(src/app)
 
 if(PERDU_BUILD_TESTS)

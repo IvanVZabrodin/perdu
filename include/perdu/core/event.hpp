@@ -26,10 +26,12 @@ namespace perdu {
 
 
 		template <typename T>
-		SubscriptionID subscribe(this auto&& self, Handler<const T&> handler) {
+		SubscriptionID subscribe(this auto&&	   self,
+								 Handler<const T&> handler,
+								 int			   priority = 50) {
 			SubscriptionID sid = self._nextid++;
-			self._handlers[typeid(T)].push_back(
-			  { sid, [h = std::move(handler)](const std::any& e) {
+			self._handlers[typeid(T)].push(
+			  { sid, priority, [h = std::move(handler)](const std::any& e) {
 				   h(std::any_cast<const T&>(e));
 			   } });
 			self._subhook(typeid(T));
@@ -38,10 +40,13 @@ namespace perdu {
 
 		SubscriptionID subscribe_by_id(this auto&&				self,
 									   std::type_index			id,
-									   Handler<const std::any&> handler) {
+									   Handler<const std::any&> handler,
+									   int						priority = 50) {
 			SubscriptionID sid = self._nextid++;
-			self._handlers[id].push_back(
-			  { sid, [h = std::move(handler)](const std::any& e) { h(e); } });
+			self._handlers[id].push(
+			  { sid, priority, [h = std::move(handler)](const std::any& e) {
+				   h(e);
+			   } });
 			self._subhook(id);
 			return sid;
 		}
@@ -57,8 +62,13 @@ namespace perdu {
 							   SubscriptionID  sid) {
 			auto it = self._handlers.find(id);
 			if (it == self._handlers.end()) return;
-			std::erase_if(it->second,
-						  [sid](const Entry& e) { return e.id == sid; });
+			auto& ev = it->second;
+			auto  e	 = ev;
+			ev		 = {};
+			for (; !e.empty(); e.pop()) {
+				if (e.top().id == sid) continue;
+				ev.push(e.top());
+			}
 			self._unsubhook(id);
 		}
 
@@ -71,21 +81,34 @@ namespace perdu {
 		void emit_by_id(std::type_index id, std::any event) const {
 			auto it = _handlers.find(id);
 			if (it == _handlers.end()) return;
-			for (auto& h : it->second) h.handler(event);
+			auto events = it->second;
+			for (; !events.empty(); events.pop()) events.top().handler(event);
 		}
 
 	  protected:
 		struct Entry
 		{
 			SubscriptionID	  id;
+			int				  priority;
 			Handler<std::any> handler;
+
+			friend bool operator<(const Entry& a, const Entry& b) {
+				return a.priority < b.priority;
+			}
+
+			friend bool operator>(const Entry& a, const Entry& b) {
+				return a.priority > b.priority;
+			}
 		};
 
 		void _subhook(std::type_index){};
 		void _unsubhook(std::type_index){};
 
-		std::unordered_map<std::type_index, std::vector<Entry>> _handlers;
-		SubscriptionID											_nextid = 0;
+		std::unordered_map<
+		  std::type_index,
+		  std::priority_queue<Entry, std::vector<Entry>, std::greater<Entry>>>
+					   _handlers;
+		SubscriptionID _nextid = 0;
 	};
 
 	using EventBus = EventManager;
@@ -131,9 +154,11 @@ namespace perdu {
 		void listen(BusID bid, std::type_index id) {
 			QueueBus&	   qbus = _buses[bid];
 			SubscriptionID lid	= qbus.bus->subscribe_by_id(
-			   id, [bid, id, this](const std::any& e) {
+			   id,
+			   [bid, id, this](const std::any& e) {
 				   _events.push({ bid, id, e });
-			   });
+			   },
+			   49);
 			qbus.listeners[id] = lid;
 		}
 
