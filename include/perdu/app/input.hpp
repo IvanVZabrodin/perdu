@@ -115,7 +115,18 @@ namespace perdu {
 		};
 
 
-		InputHandler(EventBus& src, entt::registry& reg);
+		InputHandler(entt::registry& reg);
+
+		const EventBus&	  bus() const { return _bus; }
+		EventBus&		  bus() { return _bus; }
+		const EventQueue& queue() const { return _queue; }
+		EventQueue&		  queue() { return _queue; }
+
+		void poll();
+
+	  private:
+		EventBus   _bus;
+		EventQueue _queue;
 	};
 
 	namespace events {
@@ -138,5 +149,13 @@ namespace perdu {
 			float x = 0, y = 0;
 			float dx = 0, dy = 0;
 		};
+
+		struct WindowQuit
+		{};
+		struct WindowResized
+		{
+			uint32_t width, height;
+		};
+
 	}
 }

@@ -1,6 +1,8 @@
 #include "perdu/ecs/system_registry.hpp"
 
 #include "perdu/core/log.hpp"
+#include "perdu/ecs/phase.hpp"
+#include "perdu/engine/scene.hpp"
 
 #include <algorithm>
 #include <string>
@@ -26,21 +28,40 @@ namespace perdu {
 					   + phase_str(phase)
 					   + ":"
 					   + std::to_string(priority));
-		_systems.push_back({ phase, priority, std::move(fn) });
+		_phases.at(static_cast<size_t>(phase))
+		  .push_back({ priority, std::move(fn) });
 		_dirty = true;
 	}
 
 	void SystemRegistry::update_all(entt::registry& reg, float dt) {
-		if (_dirty) {
-			std::stable_sort(_systems.begin(),
-							 _systems.end(),
+		// if (_dirty) {
+		// 	std::stable_sort(_systems.begin(),
+		// 					 _systems.end(),
+		// 					 [](const Entry& a, const Entry& b) {
+		// 						 if (a.phase != b.phase)
+		// 							 return a.phase < b.phase;
+		// 						 return a.priority < b.priority;
+		// 					 });
+		// 	_dirty = false;
+		// }
+		// for (auto& e : _systems) e.fn(reg, dt);
+	}
+
+	void SystemRegistry::update_phase(Phase phase, Scene& scene, float dt) {
+		if (_dirty) sort();
+		auto& s = _phases.at(static_cast<size_t>(phase));
+		for (auto& e : s) e.fn(scene, dt);
+	}
+
+	void SystemRegistry::sort() {
+		if (!_dirty) return;
+		for (auto& systems : _phases) {
+			std::stable_sort(systems.begin(),
+							 systems.end(),
 							 [](const Entry& a, const Entry& b) {
-								 if (a.phase != b.phase)
-									 return a.phase < b.phase;
 								 return a.priority < b.priority;
 							 });
-			_dirty = false;
 		}
-		for (auto& e : _systems) e.fn(reg, dt);
+		_dirty = false;
 	}
 }

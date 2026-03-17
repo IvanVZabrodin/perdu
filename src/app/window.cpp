@@ -1,81 +1,87 @@
 #include "perdu/app/window.hpp"
 
 #include "perdu/app/input.hpp"
+#include "perdu/components/camera.hpp"
 #include "perdu/core/assert.hpp"
 #include "perdu/core/log.hpp"
+#include "perdu/renderer/gpu_context.hpp"
 
 #include <cstdint>
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_gpu.h>
+#include <SDL3/SDL_timer.h>
 #include <SDL3/SDL_video.h>
 #include <string_view>
 
 namespace perdu {
-	Window::Window(std::string_view title, uint32_t height, uint32_t width) :
-		_events() {
-		SDL_Init(SDL_INIT_VIDEO);
+	Window::Window(InputHandler& input, GPUContext& ctx) :
+		_input(input), _wtx({ ctx }) {
+		_input.queue().subscribe<events::WindowResized>(
+		  [&](const auto& e) {
+			  _wtx.width  = e.width;
+			  _wtx.height = e.height;
+			  _wtx.create_depth_texture();
+		  },
+		  0);
 
-		_ctx.width	= width;
-		_ctx.height = height;
-		_ctx.window
-		  = SDL_CreateWindow(title.data(), width, height, SDL_WINDOW_RESIZABLE);
-		PERDU_ASSERT(_ctx.window, "window failed to initialise");
-
-		_ctx.device
-		  = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, true, nullptr);
-		PERDU_ASSERT(_ctx.device, "gpu device failed to initialise");
-		PERDU_LOG_DEBUG("using device driver "
-						+ std::string(SDL_GetGPUDeviceDriver(_ctx.device)));
-
-		SDL_ClaimWindowForGPUDevice(_ctx.device, _ctx.window);
+		_input.queue().subscribe<events::WindowQuit>(
+		  [&](auto) { _should_close = true; }, 0);
 	}
 
-	void Window::poll_events() {
-		SDL_Event e;
-		while (SDL_PollEvent(&e)) {
-			switch (e.type) {
-				case SDL_EVENT_QUIT:
-					_should_close = true;
-					_events.emit(events::WindowQuit{});
-					break;
-				case SDL_EVENT_WINDOW_RESIZED:
-					_ctx.width	= (uint32_t) e.window.data1;
-					_ctx.height = (uint32_t) e.window.data2;
-					_events.emit(
-					  events::WindowResized{ _ctx.width, _ctx.height });
-					break;
-				case SDL_EVENT_KEY_DOWN:
-					_events.emit(
-					  events::KeyEvent{ static_cast<Key>(e.key.scancode),
-										events::PressAction::pressed });
-					break;
-				case SDL_EVENT_KEY_UP:
-					_events.emit(
-					  events::KeyEvent{ static_cast<Key>(e.key.scancode),
-										events::PressAction::released });
-					break;
-				case SDL_EVENT_MOUSE_BUTTON_DOWN:
-					_events.emit(events::MouseEvent{
-						static_cast<MouseButton>(e.button.button),
-						events::PressAction::pressed });
-					break;
-				case SDL_EVENT_MOUSE_BUTTON_UP:
-					_events.emit(events::MouseEvent{
-						static_cast<MouseButton>(e.button.button),
-						events::PressAction::released });
-					break;
-				case SDL_EVENT_MOUSE_MOTION:
-					_events.emit(events::MouseMoved{
-						e.motion.x, e.motion.y, e.motion.xrel, e.motion.yrel });
-					break;
-			}
-		}
+	void Window::open() {
+		if (_title.empty()) PERDU_LOG_WARN("window title is not set");
+
+		create(WindowFlags::Resizable);
+	}
+
+	void Window::open(std::string_view title, uint32_t width, uint32_t height) {
+		_title		= title;
+		_wtx.width	= width;
+		_wtx.height = height;
+		open();
+	}
+
+	void Window::close() {
+		PERDU_ASSERT(_wtx.window, "trying to close non-existent window");
+		SDL_ReleaseWindowFromGPUDevice(_wtx.ctx.device, _wtx.window);
+		SDL_DestroyWindow(_wtx.window);
+	}
+
+	void Window::set_size(uint32_t width, uint32_t height) {
+		_wtx.width	= width;
+		_wtx.height = height;
+
+		if (_wtx.window) SDL_SetWindowSize(_wtx.window, width, height);
+	}
+
+	void Window::set_title(std::string_view title) {
+		_title = title;
+
+		if (_wtx.window) SDL_SetWindowTitle(_wtx.window, title.data());
 	}
 
 	Window::~Window() {
-		SDL_DestroyGPUDevice(_ctx.device);
-		SDL_DestroyWindow(_ctx.window);
-		SDL_Quit();
+		if (_wtx.window) close();
+	}
+
+	void Window::create(WindowFlags flags) {
+		PERDU_ASSERT(_wtx.window == nullptr,
+					 "trying to create window when it already exists");
+		SDL_WindowFlags f = 0;
+		if (flags & WindowFlags::Resizable) f |= SDL_WINDOW_RESIZABLE;
+		if (flags & WindowFlags::Hidden) f |= SDL_WINDOW_HIDDEN;
+		if (flags & WindowFlags::Borderless) f |= SDL_WINDOW_BORDERLESS;
+		_wtx.window
+		  = SDL_CreateWindow(_title.data(), _wtx.width, _wtx.height, f);
+		SDL_ClaimWindowForGPUDevice(_wtx.ctx.device, _wtx.window);
+		PERDU_ASSERT(_wtx.window, "window failed to initialise");
+
+		SDL_SetGPUSwapchainParameters(_wtx.ctx.device,
+									  _wtx.window,
+									  SDL_GPU_SWAPCHAINCOMPOSITION_SDR,
+									  SDL_GPU_PRESENTMODE_IMMEDIATE // no vsync
+		);
+		_input.bus().emit(events::WindowResized{ _wtx.width, _wtx.height });
 	}
 }

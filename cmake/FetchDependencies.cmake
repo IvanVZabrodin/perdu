@@ -34,6 +34,28 @@ find_or_fetch(EnTT
     GIT_TAG        v3.13.0
 )
 
+# find_or_fetch(spirv-cross
+#     GIT_REPOSITORY https://github.com/KhronosGroup/SPIRV-Cross.git
+#     GIT_TAG        main
+#     CMAKE_ARGS     SPIRV_CROSS_STATIC=ON
+#                    SPIRV_CROSS_CLI=OFF
+#                    SPIRV_CROSS_ENABLE_TESTS=OFF
+# )
+find_package(spirv_cross_core REQUIRED)
+
+# find_or_fetch(shaderc
+#     GIT_REPOSITORY https://github.com/google/shaderc.git
+#     GIT_TAG        main
+#     CMAKE_ARGS
+#         SHADERC_SKIP_TESTS=ON
+#         SHADERC_SKIP_EXAMPLES=ON
+# 		SHADERC_SKIP_INSTALL=ON
+# 		SHADERC_ENABLE_SHARED_CRT=OFF
+#         SHADERC_SKIP_COPYRIGHT_CHECK=ON
+# )
+# find_package(libshaderc REQUIRED)
+find_library(SHADERC_COMBINED REQUIRED shaderc_combined)
+
 if(PERDU_BUILD_TESTS)
 	FetchContent_Declare( # Catch2 is weird
         Catch2

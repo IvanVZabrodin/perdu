@@ -1,6 +1,5 @@
 add_library(perdu_app
-	STATIC	scene.cpp
-			window.cpp
+	STATIC	window.cpp
 			input.cpp
 			application.cpp
 )
@@ -14,6 +13,7 @@ target_include_directories(perdu_app
 target_link_libraries(perdu_app
 	PUBLIC	perdu::core
 			perdu::ecs
+			perdu::engine
 			perdu::renderer
 	PRIVATE SDL3::SDL3
 )

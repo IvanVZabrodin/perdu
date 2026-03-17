@@ -1,9 +1,9 @@
-#include "perdu/app/scene.hpp"
+#include "perdu/engine/scene.hpp"
 
-#include "perdu/app/entity.hpp"
+#include "perdu/ecs/phase.hpp"
 #include "perdu/ecs/system_registry.hpp"
+#include "perdu/engine/entity.hpp"
 
-#include <entt/entity/fwd.hpp>
 #include <entt/entt.hpp>
 
 namespace perdu {
@@ -20,7 +20,7 @@ namespace perdu {
 		return ent;
 	};
 
-	void Scene::update(float dt) {
-		SystemRegistry::get().update_all(registry, dt);
+	void Scene::update(Phase phase, float dt) {
+		SystemRegistry::get().update_phase(phase, *this, dt);
 	}
 }

@@ -4,6 +4,7 @@
 #include "perdu/core/hash.hpp"
 #include "perdu/core/log.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -22,9 +23,21 @@ namespace perdu {
 		  public:
 			Handle() = default;
 
-			// Can't copy handles. Might just link to clone
-			Handle(const Handle&)			= delete;
-			Handle operator=(const Handle&) = delete;
+			Handle(const Handle& other) {
+				if (!other.valid()) return;
+				_cache = other._cache;
+				_id	   = other._id;
+				_cache->_data[_id].refcount++;
+			};
+			Handle& operator=(const Handle& other) {
+				if (this == &other) return *this;
+				if (valid()) release();
+				if (!other.valid()) return *this;
+				_cache = other._cache;
+				_id	   = other._id;
+				_cache->_data[_id].refcount++;
+				return *this;
+			};
 
 			Handle(Handle&& other) noexcept {
 				_cache		 = other._cache;
@@ -34,7 +47,7 @@ namespace perdu {
 			};
 
 			Handle& operator=(Handle&& other) noexcept {
-				release();
+				if (valid()) release();
 				_cache		 = other._cache;
 				_id			 = other._id;
 				other._cache = nullptr;
@@ -43,7 +56,7 @@ namespace perdu {
 			}
 
 			~Handle() {
-				if (_cache == nullptr) return;
+				if (!valid()) return;
 				release();
 			}
 
@@ -54,7 +67,7 @@ namespace perdu {
 
 			void release() {
 				if (!valid()) {
-					PERDU_LOG_WARN("Trying to release invalid handle");
+					PERDU_LOG_WARN("trying to release invalid handle");
 					return;
 				}
 
@@ -73,7 +86,7 @@ namespace perdu {
 			ResourceCache* get_cache() const { return _cache; }
 
 			Handle clone() const {
-				PERDU_ASSERT(valid(), "Trying to clone invalid handle");
+				PERDU_ASSERT(valid(), "trying to clone invalid handle");
 				_cache->_data[_id].refcount++;
 				return Handle{ _cache, _id };
 			}
@@ -91,6 +104,13 @@ namespace perdu {
 		ResourceCache() = default;
 		ResourceCache(DestroyFunction destroyer) : _destroyer(destroyer) {}
 
+		~ResourceCache() {
+			PERDU_LOG_INFO("destroying resource cache and all members");
+			for (size_t i = 0; i < _data.size(); ++i) {
+				if (_data[i].alive) destroy(i);
+			}
+		}
+
 		void set_destroyer(DestroyFunction destroyer) {
 			_destroyer = destroyer;
 		}
@@ -99,7 +119,7 @@ namespace perdu {
 		template <typename... Args>
 		Handle emplace(std::string_view name,
 					   bool				persistent = false,
-					   Args... args) {
+					   Args&&... args) {
 			auto ptr = new T(std::forward<Args>(args)...);
 			return store(name, ptr, persistent);
 		};
@@ -112,12 +132,13 @@ namespace perdu {
 
 		Handle get(std::string_view name) {
 			if (!_ntid.contains(hash(name))) {
-				PERDU_LOG_WARN("Trying to get unknown resource with name "
+				PERDU_LOG_WARN("trying to get unknown resource with name "
 							   + std::string(name));
 				return { nullptr, 0 };
 			}
 			uint32_t id = _ntid.at(hash(name));
-			return get(id);
+			_data[id].refcount++;
+			return Handle{ this, id };
 		}
 
 	  private:
@@ -150,13 +171,13 @@ namespace perdu {
 		Handle manage(uint32_t hash, T* resource, bool persistent) {
 			uint32_t id = get_id();
 			if (id >= _data.size()) {
-				PERDU_LOG_DEBUG("Increasing resource cache capacity");
+				PERDU_LOG_DEBUG("increasing resource cache capacity");
 				_data.resize(((size_t) ((id + 1) / chunk_size) + 1)
 							 * chunk_size);
 			}
 			_ntid[hash] = id;
 			PERDU_ASSERT(!_data[id].alive,
-						 "Trying to overwrite already alive slot");
+						 "trying to overwrite already alive slot");
 			_data[id] = { .data		  = resource,
 						  .alive	  = true,
 						  .persistent = persistent,
@@ -167,14 +188,14 @@ namespace perdu {
 
 		void release(uint32_t id) {
 			Slot& s = _data[id];
-			PERDU_ASSERT(s.alive, "Trying to free dead resource");
+			PERDU_ASSERT(s.alive, "trying to free dead resource");
 			s.refcount--;
 			if (!s.persistent && s.refcount == 0) destroy(id);
 		}
 
 		void destroy(uint32_t id) {
-			PERDU_ASSERT(_data[id].alive, "Trying to destroy dead resource");
-			PERDU_LOG_INFO("Freeing resource id " + std::to_string(id));
+			PERDU_ASSERT(_data[id].alive, "trying to destroy dead resource");
+			PERDU_LOG_INFO("freeing resource id " + std::to_string(id));
 			Slot& s = _data[id];
 
 			_destroyer(s.data);
@@ -183,6 +204,8 @@ namespace perdu {
 			s.alive		 = false;
 
 			_free.push_back(id);
+			std::erase_if(_ntid,
+						  [id](auto& pair) { return pair.second == id; });
 		}
 
 		bool valid(uint32_t id) {
@@ -191,12 +214,12 @@ namespace perdu {
 		}
 
 		const T& get(uint32_t id) const {
-			PERDU_ASSERT(valid(id), "Trying to get invalid resource");
+			PERDU_ASSERT(valid(id), "trying to get invalid resource");
 			return *_data[id].data;
 		}
 
 		T& get(uint32_t id) {
-			PERDU_ASSERT(valid(id), "Trying to get invalid resource");
+			PERDU_ASSERT(valid(id), "trying to get invalid resource");
 			return *_data[id].data;
 		}
 	};
