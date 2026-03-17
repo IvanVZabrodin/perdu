@@ -1,5 +1,6 @@
 add_library(perdu_components
 	STATIC	mesh.cpp
+			transform.cpp
 )
 add_library(perdu::components ALIAS perdu_components)
 

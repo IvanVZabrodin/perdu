@@ -5,6 +5,7 @@
 #include <cmath>
 #include <concepts>
 #include <initializer_list>
+#include <iterator>
 #include <ostream>
 #include <sstream>
 #include <vector>
@@ -24,6 +25,11 @@ namespace perdu {
 		Vector() : _dim(0) {}
 		explicit Vector(size_t dim, T val = T{}) : _dim(dim), _data(dim, val) {}
 
+		template <std::input_iterator It>
+		Vector(It first, It last) : _data(first, last) {
+			_dim = _data.size();
+		}
+
 		Vector(std::initializer_list<T> values) :
 			_dim(values.size()), _data(values.begin(), values.end()) {}
 
@@ -32,6 +38,13 @@ namespace perdu {
 			Vector<NT> res(_dim);
 			std::copy(_data.begin(), _data.end(), res.begin());
 			return res;
+		}
+
+		Vector extend(size_t dim) const {
+			Vector res{ _data.begin(), _data.end() };
+			res._data.resize(dim);
+			res._dim = dim;
+			return std::move(res);
 		}
 
 		auto begin() { return _data.begin(); }
@@ -202,5 +215,16 @@ namespace perdu {
 		}
 
 		return mat;
+	}
+
+	template <typename T>
+	inline T pmod(T v, T m) {
+		if constexpr (std::is_integral_v<T>) {
+			T r = v % m;
+			return r + (r < 0) * m;
+		} else {
+			T r = std::fmod(v, m);
+			return r + (r < 0) * m;
+		};
 	}
 }
