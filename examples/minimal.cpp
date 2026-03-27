@@ -3,6 +3,7 @@
 #include "perdu/app/window.hpp"
 #include "perdu/assets/assets.hpp"
 #include "perdu/assets/resource_cache.hpp"
+#include "perdu/components/camera.hpp"
 #include "perdu/components/mesh.hpp"
 #include "perdu/components/transform.hpp"
 #include "perdu/core/log.hpp"
@@ -34,6 +35,8 @@ std::string primitive_to_string(perdu::PrimitiveType p) {
 	}
 }
 
+constexpr int mdim = 3;
+
 class MyApp : public perdu::Application {
 	void on_start() {
 		auto frag = scene.assets.shaders.store(
@@ -52,19 +55,28 @@ class MyApp : public perdu::Application {
 							 }),
 		  true);
 
-		renderer.frag = frag;
-		renderer.vert = vert;
+		renderer.frag	  = frag;
+		renderer.vert	  = vert;
+		perdu::Entity cam = scene.vars.set("cam", scene.create());
+		auto&		  k
+		  = cam.add<perdu::Transform>(perdu::Vectorf{ 0.0, 0.0 }.extend(mdim));
+		cam.add<perdu::Camera>(90.0f);
+
+		view.camera = cam.handle();
+		view.target = &window.wtx();
 
 		perdu::Entity e = scene.vars.set("testentity", scene.create());
 		auto&		  m = e.add<perdu::Mesh>(
-		  perdu::make_cube(10, 1.0f, perdu::PrimitiveType::Triangles));
-		e.add<perdu::Transform>(perdu::Vectorf{ 0.0f, 0.0f, -3.0f }.extend(10));
+		  perdu::make_cube(mdim, 1.0f, perdu::PrimitiveType::Triangles));
+		e.add<perdu::Transform>(
+		  perdu::Vectorf{ 0.0f, 0.0f, -3.0f }.extend(mdim));
 		auto h
 		  = scene.assets.meshes.store("hi", perdu::load_mesh(gpu, m), true);
 		m.handle = h;
+		m.recompute();
 		scene.vars.set<size_t>("cpos", 0);
 		scene.vars.set<size_t>("crot", 0);
-		size_t tmin = 1;
+		scene.vars.set<size_t>("tmin", 1);
 
 		input.queue().subscribe<events::KeyEvent>([&](events::KeyEvent ev) {
 			if (ev.action == events::PressAction::released) return;
@@ -86,16 +98,16 @@ class MyApp : public perdu::Application {
 				case perdu::Key::Left:
 					{
 						auto& r = scene.vars.get<size_t>("crot");
-						r		= perdu::pmod(r - 1,
-										  (size_t) perdu::rotation_planes(m.dim));
+						r = perdu::pmod(r - 1,
+										(size_t) perdu::rotation_planes(m.dim));
 						PERDU_LOG_DEBUG("new crot: " + std::to_string(r));
 						break;
 					}
 				case perdu::Key::Right:
 					{
 						auto& r = scene.vars.get<size_t>("crot");
-						r		= perdu::pmod(r + 1,
-										  (size_t) perdu::rotation_planes(m.dim));
+						r = perdu::pmod(r + 1,
+										(size_t) perdu::rotation_planes(m.dim));
 						PERDU_LOG_DEBUG("new crot: " + std::to_string(r));
 						break;
 					}
@@ -108,6 +120,8 @@ class MyApp : public perdu::Application {
 											 1.0f,
 											 next_enum(me.primitive_type, 3))
 											 .indices;
+							  PERDU_LOG_DEBUG(
+								std::to_string(me.indices.size()));
 							  me.primitive_type
 								= next_enum(me.primitive_type, 3);
 							  me.recompute();
@@ -119,16 +133,22 @@ class MyApp : public perdu::Application {
 					}
 				case perdu::Key::Enter:
 					{
+						auto& mk = scene.vars.get<perdu::Entity>("testentity");
+						perdu::PrimitiveType pt
+						  = mk.get<perdu::Mesh>().primitive_type;
 						auto  en = scene.create();
-						auto& me = en.add<perdu::Mesh>(perdu::make_cube(m.dim));
-						auto  h	 = scene.assets.meshes.store(
-							"m" + std::to_string(tmin),
-							perdu::load_mesh(gpu, me),
-							true);
+						auto& me = en.add<perdu::Mesh>(
+						  perdu::make_cube(mdim, 1.0f, pt));
+						size_t& tmin	 = scene.vars.get<size_t>("tmin");
+						auto	l		 = perdu::load_mesh(gpu, me);
+						l->cpu.debugname = "m" + std::to_string(tmin);
+						auto h			 = scene.assets.meshes.store(
+						  "m" + std::to_string(tmin), l, true);
 						me.handle = h;
+						float z	  = (float) (++tmin) * -3.0f;
 						auto& tr  = en.add<perdu::Transform>(
-						   perdu::Vectorf{ 0.0, 0.0, (float) ++tmin * -3.0f }
-							 .extend(m.dim));
+						  perdu::Vectorf{ 0.0, 0.0, z }.extend(m.dim));
+						break;
 					}
 				default: break;
 			}
@@ -141,27 +161,44 @@ static constexpr float movespeed = 2.0f;
 
 static void inputtest(perdu::Scene& scene, float dt) {
 	auto& state = scene.get_ctx<perdu::InputHandler::InputState>();
-	auto& e		= scene.vars.get<perdu::Entity>("testentity");
-	scene.registry.view<perdu::Mesh, perdu::Transform>().each(
-	  [&](perdu::Mesh& m, perdu::Transform& t) {
-		  if (state.is_key_down(perdu::Key::W)) {
-			  t.position[scene.vars.get<size_t>("cpos")] += movespeed * dt;
-		  } else if (state.is_key_down(perdu::Key::S)) {
-			  t.position[scene.vars.get<size_t>("cpos")] -= movespeed * dt;
-		  } else if (state.is_key_down(perdu::Key::Up)) {
-			  t.rotate_plane(scene.vars.get<size_t>("crot"), rotspeed * dt);
-		  } else if (state.is_key_down(perdu::Key::Down)) {
-			  t.rotate_plane(scene.vars.get<size_t>("crot"), -rotspeed * dt);
-		  } else if (state.is_key_down(perdu::Key::J)) {
-			  perdu::Mesh& m	= e.get<perdu::Mesh>();
-			  m.vertices[0][0] += dt;
-			  m.recompute();
-		  }
-	  });
+	auto& e		= scene.vars.get<perdu::Entity>("cam");
+	// scene.registry.view<perdu::Mesh, perdu::Transform>().each(
+	//   [&](perdu::Mesh& m, perdu::Transform& t) {
+	// 	  if (state.is_key_down(perdu::Key::W)) {
+	// 		  t.position[scene.vars.get<size_t>("cpos")] += movespeed * dt;
+	// 	  }
+	// 	  if (state.is_key_down(perdu::Key::S)) {
+	// 		  t.position[scene.vars.get<size_t>("cpos")] -= movespeed * dt;
+	// 	  }
+	// 	  if (state.is_key_down(perdu::Key::Up)) {
+	// 		  t.rotate_plane(scene.vars.get<size_t>("crot"), rotspeed * dt);
+	// 	  }
+	// 	  if (state.is_key_down(perdu::Key::Down)) {
+	// 		  t.rotate_plane(scene.vars.get<size_t>("crot"), -rotspeed * dt);
+	// 	  }
+	// 	  if (state.is_key_down(perdu::Key::J)) {
+	// 		  perdu::Mesh& m	= e.get<perdu::Mesh>();
+	// 		  m.vertices[0][0] += dt;
+	// 		  m.recompute();
+	// 	  }
+	//   });
+
+	auto& t = e.get<perdu::Transform>();
+	if (state.is_key_down(perdu::Key::W)) {
+		t.position[scene.vars.get<size_t>("cpos")] += movespeed * dt;
+	}
+	if (state.is_key_down(perdu::Key::S)) {
+		t.position[scene.vars.get<size_t>("cpos")] -= movespeed * dt;
+	}
+	if (state.is_key_down(perdu::Key::Up)) {
+		t.rotate_plane(scene.vars.get<size_t>("crot"), rotspeed * dt);
+	}
+	if (state.is_key_down(perdu::Key::Down)) {
+		t.rotate_plane(scene.vars.get<size_t>("crot"), -rotspeed * dt);
+	}
 }
 
 static perdu::AutoSystem _inputtest{ inputtest, perdu::Phase::Input };
-
 
 int main() {
 	perdu::log::set_min_level(perdu::log::Level::Debug);

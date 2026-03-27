@@ -1,5 +1,6 @@
 #pragma once
 
+#include "entt/entity/fwd.hpp"
 #include "perdu/engine/scene.hpp"
 
 #include <entt/entt.hpp>
@@ -30,6 +31,8 @@ namespace perdu {
 		bool has() const {
 			return _registry.all_of<T...>(_entity);
 		}
+
+		entt::entity handle() const { return _entity; }
 
 	  private:
 		friend class Scene;

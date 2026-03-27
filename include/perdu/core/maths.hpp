@@ -144,9 +144,7 @@ namespace perdu {
 	T dot(const Vector<T>& a, const Vector<T>& b) {
 		PERDU_ASSERT(a.dim() == b.dim(), "dim mismatch");
 		T s{};
-		for (size_t i = 0; i < a.dim(); ++i) {
-			s += a[i] * b[i];
-		}
+		for (size_t i = 0; i < a.dim(); ++i) { s += a[i] * b[i]; }
 		return s;
 	}
 
@@ -195,26 +193,42 @@ namespace perdu {
 	}
 
 	template <std::floating_point T = float, std::floating_point RT = T>
-	std::vector<T> build_rotation_matrix(size_t dim, const Vector<RT>& angles) {
+	std::vector<T> build_rotation_matrix(size_t			   dim,
+										 const Vector<RT>& angles,
+										 bool			   transposed = false) {
 		PERDU_ASSERT(angles.dim() == rotation_planes(dim), "invalid dim pair");
 		std::vector<T> mat(dim * dim, 0.0f);
 		for (size_t i = 0; i < dim; ++i) mat[i * dim + i] = 1.0f;
 
-		for (size_t a = 0; a < dim - 1; ++a) {
-			for (size_t b = a + 1; b < dim; ++b) {
-				RT theta = angles[plane_index(dim, a, b)];
-				T  c = std::cos(theta), s = std::sin(theta);
+		std::vector<std::pair<size_t, size_t>> planes;
+		for (size_t a = 0; a < dim - 1; ++a)
+			for (size_t b = a + 1; b < dim; ++b) planes.emplace_back(a, b);
 
-				for (size_t col = 0; col < dim; ++col) {
-					T ra			   = mat[a * dim + col];
-					T rb			   = mat[b * dim + col];
-					mat[a * dim + col] = ra * c - rb * s;
-					mat[b * dim + col] = ra * s + rb * c;
-				}
+		if (transposed) std::reverse(planes.begin(), planes.end());
+
+		for (auto& [a, b] : planes) {
+			RT theta = angles[plane_index(dim, a, b)];
+			if (transposed) theta = -theta;
+			T c = std::cos(theta), s = std::sin(theta);
+			for (size_t col = 0; col < dim; ++col) {
+				T ra			   = mat[a * dim + col];
+				T rb			   = mat[b * dim + col];
+				mat[a * dim + col] = ra * c - rb * s;
+				mat[b * dim + col] = ra * s + rb * c;
 			}
 		}
 
 		return mat;
+	}
+
+	template <typename T>
+	std::vector<T> transpose(const std::vector<T>& mat, size_t dim) {
+		std::vector<T> res(dim * dim);
+		for (size_t i = 0; i < dim; ++i) {
+			for (size_t j = 0; j < dim; ++j) {
+				res[i * dim + j] = mat[j * dim + i];
+			}
+		}
 	}
 
 	template <typename T>
