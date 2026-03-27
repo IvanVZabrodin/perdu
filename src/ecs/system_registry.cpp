@@ -24,10 +24,10 @@ std::string phase_str(perdu::Phase phase) {
 namespace perdu {
 	void
 	  SystemRegistry::register_system(SystemFn fn, Phase phase, int priority) {
-		PERDU_LOG_INFO("System registered for "
-					   + phase_str(phase)
-					   + ":"
-					   + std::to_string(priority));
+		// PERDU_LOG_INFO("System registered for "
+		// 			   + phase_str(phase)
+		// 			   + ":"
+		// 			   + std::to_string(priority));
 		_phases.at(static_cast<size_t>(phase))
 		  .push_back({ priority, std::move(fn) });
 		_dirty = true;
@@ -39,8 +39,8 @@ namespace perdu {
 		// 					 _systems.end(),
 		// 					 [](const Entry& a, const Entry& b) {
 		// 						 if (a.phase != b.phase)
-		// 							 return a.phase < b.phase;
-		// 						 return a.priority < b.priority;
+		// 							 return a.phase <
+		// b.phase; 						 return a.priority < b.priority;
 		// 					 });
 		// 	_dirty = false;
 		// }
@@ -64,4 +64,4 @@ namespace perdu {
 		}
 		_dirty = false;
 	}
-}
+} // namespace perdu

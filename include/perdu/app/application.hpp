@@ -1,8 +1,10 @@
 #pragma once
 
+#include "entt/entity/entity.hpp"
 #include "perdu/app/input.hpp"
 #include "perdu/app/window.hpp"
 #include "perdu/engine/scene.hpp"
+#include "perdu/renderer/gpu_context.hpp"
 #include "perdu/renderer/renderer.hpp"
 
 #include <cstdint>
@@ -24,6 +26,7 @@ namespace perdu {
 		Renderer	 renderer{ gpu, scene };
 		InputHandler input{ scene.registry };
 		Window		 window{ input, gpu };
+		RenderView	 view{ entt::null, nullptr };
 
 		virtual void on_start() {}
 		virtual void on_stop() {}

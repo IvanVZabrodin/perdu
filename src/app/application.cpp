@@ -3,6 +3,7 @@
 #include "perdu/app/window.hpp"
 #include "perdu/core/clock.hpp"
 #include "perdu/core/log.hpp"
+#include "perdu/engine/entity.hpp"
 #include "perdu/renderer/gpu_context.hpp"
 
 #include <chrono>
@@ -18,16 +19,17 @@ namespace perdu {
 
 		scene.add_ctx<EventBus>();
 		EventQueue& inputqueue = input.queue();
-		renderer.target		   = &window.wtx();
 
 
 		PERDU_LOG_INFO("start hook");
 		on_start();
 
+		renderer.view = &view;
+
 		PERDU_LOG_INFO("starting mainloop");
 
 		uint32_t frame = 0;
-		float	 dsum  = 0.0f;
+		double	 dsum  = 0.0f;
 
 		Clock& clock = scene.add_ctx<Clock>();
 		float  dt	 = 0.0f;
@@ -40,9 +42,9 @@ namespace perdu {
 			scene.update(perdu::Phase::Update, dt);
 			scene.update(perdu::Phase::PostUpdate, dt);
 
-			renderer.begin_frame();
 			scene.update(perdu::Phase::PreRender, dt);
 			renderer.prerender();
+			renderer.begin_frame();
 			scene.update(perdu::Phase::Render, dt);
 			renderer.render();
 			scene.update(perdu::Phase::UI, dt);
@@ -51,16 +53,15 @@ namespace perdu {
 
 			dt = clock.tick();
 			if (target_dt != 0.0f) {
-				PERDU_LOG_DEBUG("sleeping");
 				if (dt < target_dt)
 					std::this_thread::sleep_for(
-					  std::chrono::duration<float>(target_dt - dt));
+					  std::chrono::duration<double>(target_dt - dt));
 			}
 			frame++;
 			dsum += dt;
 
-			if (frame % 24 == 0) {
-				float fps = 1.0f / (dsum / 24.0f);
+			if (frame % 60 == 0) {
+				double fps = 1.0f / (dsum / 60.0f);
 				PERDU_LOG_DEBUG("FPS: " + std::to_string(fps));
 				dsum = 0.0f;
 			}

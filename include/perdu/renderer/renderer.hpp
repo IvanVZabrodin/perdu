@@ -18,9 +18,19 @@ namespace perdu {
 	class PipelineCache;
 	class ComputeCache;
 
+	struct RenderOffsets
+	{
+		// The vertex offset - not including `sizeof(float)`
+		uint32_t vert	   = 0;
+		// The transform offset - not including `sizeof(float)`
+		uint32_t transform = 0;
+		// The entityinfo offset - not including `sizeof(EntityInfo)`
+		uint32_t entity	   = 0;
+	};
+
 	class Renderer {
 	  public:
-		RenderTarget* target;
+		RenderView* view;
 
 		explicit Renderer(GPUContext& ctx, Scene& scene);
 		~Renderer();
@@ -43,21 +53,23 @@ namespace perdu {
 		ShaderHandle vert, frag;
 
 	  private:
-		GPUContext&					   _ctx;
-		Scene&						   _scene;
-		std::unique_ptr<PipelineCache> _pipelines;
-		std::unique_ptr<ComputeCache>  _computes;
-		SDL_GPUCommandBuffer*		   _cmd;
-		SDL_GPUCommandBuffer*		   _precmd;
-		SDL_GPURenderPass*			   _pass;
-		SDL_GPUTransferBuffer*		   _transfer;
-		uint32_t					   _tsize;
+		GPUContext&									_ctx;
+		Scene&										_scene;
+		std::unique_ptr<PipelineCache>				_pipelines;
+		std::unique_ptr<ComputeCache>				_computes;
+		SDL_GPUCommandBuffer*						_cmd;
+		SDL_GPUCommandBuffer*						_precmd;
+		SDL_GPURenderPass*							_pass;
+		SDL_GPUTransferBuffer*						_transfer;
+		uint32_t									_tsize;
+		std::unordered_map<uint32_t, RenderOffsets> _dimtooff;
 
 		struct DimBuffers
 		{
 			SDL_GPUBuffer* entity_buffer	  = nullptr;
 			SDL_GPUBuffer* vertex_buffer	  = nullptr;
 			SDL_GPUBuffer* transform_buffer	  = nullptr;
+			SDL_GPUBuffer* cam_buffer		  = nullptr;
 			SDL_GPUBuffer* output_buffer	  = nullptr;
 			uint32_t	   entity_capacity	  = 0;
 			uint32_t	   vertex_capacity	  = 0;
@@ -77,6 +89,8 @@ namespace perdu {
 							uint32_t&		size,
 							uint32_t		required,
 							uint32_t		usage = (1u << 4));
+
+		RenderOffsets allocate_for_dim(uint32_t dim, uint32_t size);
 
 		void collect_meshes();
 		void collect_transforms();

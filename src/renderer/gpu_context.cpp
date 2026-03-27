@@ -21,7 +21,9 @@ namespace perdu {
 		device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, true, nullptr);
 #endif
 
-		PERDU_ASSERT(device, "gpu device failed to initialise");
+		PERDU_ASSERT(device,
+					 "gpu device failed to initialise: "
+					   + std::string(SDL_GetError()));
 		PERDU_LOG_DEBUG("using device driver "
 						+ std::string(SDL_GetGPUDeviceDriver(device)));
 	}

@@ -19,7 +19,7 @@ namespace perdu {
 		cpu.vertices	   = std::move(flat);
 		cpu.primitive_type = primitive_type;
 		cpu.dim			   = dim;
-		cpu.indices		   = indices;
+		cpu.indices		   = std::move(indices);
 		cpu.dirty		   = true;
 	}
 }

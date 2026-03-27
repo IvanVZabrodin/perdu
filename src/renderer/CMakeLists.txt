@@ -29,6 +29,6 @@ target_link_libraries(perdu_renderer
 			spirv-cross-core
 			shaderc_combined
 			glslang
-			SPIRV-tools
+			SPIRV-Tools
 			SPIRV-Tools-opt
 )

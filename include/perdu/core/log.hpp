@@ -6,9 +6,15 @@
 
 #ifdef NDEBUG
 #	define PERDU_LOG_DEBUG(msg) ((void) 0)
+#	define PERDU_MARKER()		 ((void) 0)
 #else
 #	define PERDU_LOG_DEBUG(msg) \
 		::perdu::log::log(::perdu::log::Level::Debug, msg, __FILE__, __LINE__)
+#	define PERDU_MARKER()                                              \
+		::perdu::log::log(::perdu::log::Level::Debug,                   \
+						  "marker at line " + std::to_string(__LINE__), \
+						  __FILE__,                                     \
+						  __LINE__)
 #endif
 #define PERDU_LOG_INFO(msg) \
 	::perdu::log::log(::perdu::log::Level::Info, msg, __FILE__, __LINE__)
