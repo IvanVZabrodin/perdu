@@ -53,8 +53,8 @@ find_package(spirv_cross_core REQUIRED)
 # 		SHADERC_ENABLE_SHARED_CRT=OFF
 #         SHADERC_SKIP_COPYRIGHT_CHECK=ON
 # )
-# find_package(libshaderc REQUIRED)
-find_library(SHADERC_COMBINED REQUIRED shaderc_combined)
+# find_package(shaderc_combined REQUIRED)
+# find_library(SHADERC_COMBINED REQUIRED shaderc_combined)
 
 if(PERDU_BUILD_TESTS)
 	FetchContent_Declare( # Catch2 is weird

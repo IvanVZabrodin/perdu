@@ -16,7 +16,8 @@ namespace perdu {
 		PrimitiveType		  primitive_type;
 		std::vector<float>	  vertices{};
 		std::vector<uint32_t> indices{};
-		bool				  dirty = false;
+		std::string			  debugname = "unknown";
+		bool				  dirty		= false;
 	};
 
 	struct GPUMesh

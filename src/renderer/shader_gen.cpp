@@ -37,9 +37,10 @@ layout(std430, set = 0, binding = 2) readonly buffer TransformBuffer {
     float transforms[];
 };
 
-// layout(std430, set = 0, binding = 3) readonly buffer CameraBuffer {
-	// float cammat[];
-// };
+layout(std430, set = 0, binding = 3) readonly buffer CameraBuffer {
+	float cammat[DIM * DIM];
+	float camtran[DIM];
+};
 
 layout(std430, set = 1, binding = 0) writeonly buffer OutputBuffer {
     vec4 projected[];
@@ -71,15 +72,28 @@ void main() {
     for (uint i = 0; i < DIM; ++i)
         v[i] = vertices[e.vertex_offset * DIM + local_idx * DIM + i];
 
-	float rotated[DIM];
+	float rotated1[DIM];
     for (uint i = 0; i < DIM; ++i) {
-        rotated[i] = 0.0;
+        rotated1[i] = 0.0;
         for (uint j = 0; j < DIM; ++j)
-            rotated[i] += transforms[e.matrix_offset + i * DIM + j] * v[j];
+            rotated1[i] += transforms[e.matrix_offset + i * DIM + j] * v[j];
     }
 
 	for (uint i = 0; i < DIM; ++i)
-        rotated[i] += transforms[e.position_offset + i];
+        rotated1[i] += transforms[e.position_offset + i];
+	
+	float translated[DIM];
+	for (uint i = 0; i < DIM; ++i)
+		translated[i] = rotated1[i] - camtran[i];
+
+	// Step 2: rotate by camera orientation
+	float rotated[DIM];
+	for (uint i = 0; i < DIM; ++i) {
+		rotated[i] = 0.0;
+		for (uint j = 0; j < DIM; ++j)
+			rotated[i] += cammat[i * DIM + j] * translated[j];  // j*DIM+i instead of i*DIM+j
+	}
+
 	
 	float current[DIM];
     for (uint i = 0; i < DIM; ++i) current[i] = rotated[i];
@@ -101,7 +115,7 @@ void main() {
 	float w     = e.camera_dist - rotated[2];
 	if (!visible) {
 		// Push vertex far off screen so it doesn't affect rendering
-		projected[global_idx] = vec4(0.0, 0.0, -2.0, 0.0);
+		projected[global_idx] = vec4(0.0, 0.0, -2.0, v[0]);
 		return;
 	}
 	float depth = e.camera_dist / w;  // perspective depth
@@ -111,7 +125,7 @@ void main() {
 	// current[0] = x, current[1] = y
 	// rotated[2] = depth (z before final projection)
 	// 1.0        = w
-	projected[global_idx] = vec4(current[0], current[1], depth, 1.0);
+	projected[global_idx] = vec4(current[0], current[1], depth, v[0]);
 }
 	)";
 
@@ -138,7 +152,7 @@ void main() {
 
 		CPUCompute cpu{
 			.spirv		  = code,
-			.buffcount	  = { 3, 1 },
+			.buffcount	  = { 4, 1 },
 			.textcount	  = { 0, 0 },
 			.uniformcount = 1,
 			.samplers	  = 0,
@@ -162,8 +176,6 @@ void main() {
 
 	ComputeCache::ComputeCache(GPUContext& __ctx) : ctx(__ctx) {};
 	ComputeCache::~ComputeCache() {
-		for (auto& [dim, c] : computes) {
-			delete c;
-		}
+		for (auto& [dim, c] : computes) { delete c; }
 	}
 }

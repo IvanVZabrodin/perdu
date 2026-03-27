@@ -1,0 +1,4 @@
+get multi entity working
+get transform working
+get camera working
+profit

@@ -6,7 +6,7 @@
 
 namespace perdu {
 	void RenderTarget::create_depth_texture() {
-		if (depth) destroy_depth_texture();
+		if (depth.valid()) destroy_depth_texture();
 
 		SDL_GPUTextureCreateInfo info{
 			.type				  = SDL_GPU_TEXTURETYPE_2D,
@@ -18,19 +18,19 @@ namespace perdu {
 			.num_levels			  = 1,
 		};
 
-		depth		 = SDL_CreateGPUTexture(ctx.device, &info);
-		depth_format = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
-		PERDU_ASSERT(depth, "failed to create depth texture");
+		depth = { SDL_CreateGPUTexture(ctx.device, &info),
+				  SDL_GPU_TEXTUREFORMAT_D32_FLOAT };
+		PERDU_ASSERT(depth.valid(), "failed to create depth texture");
 	}
 	void RenderTarget::destroy_depth_texture() {
-		if (depth) {
-			SDL_ReleaseGPUTexture(ctx.device, depth);
+		if (depth.valid()) {
+			SDL_ReleaseGPUTexture(ctx.device, depth.texture);
 		} else {
 			PERDU_LOG_WARN("tried to destroy non-existent depth texture");
 		}
 	}
 
 	RenderTarget::~RenderTarget() {
-		if (depth) destroy_depth_texture();
+		if (depth.valid()) destroy_depth_texture();
 	}
 }
