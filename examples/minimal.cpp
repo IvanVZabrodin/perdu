@@ -35,7 +35,7 @@ std::string primitive_to_string(perdu::PrimitiveType p) {
 	}
 }
 
-constexpr int mdim = 3;
+constexpr int mdim = 10;
 
 class MyApp : public perdu::Application {
 	void on_start() {

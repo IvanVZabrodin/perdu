@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional> // std::hash
 #include <memory>
 #include <string>
 #include <string_view>
@@ -76,14 +77,18 @@ namespace perdu {
 				_id	   = 0;
 			};
 
-			const T& get() const { return _cache->get(_id); }
-			T&		 get() { return _cache->get(_id); }
+			const T& get() const { return _cache->get_raw(_id); }
+			T&		 get() { return _cache->get_raw(_id); }
 
 			const T* operator->() const { return &get(); }
 			T*		 operator->() { return &get(); }
 
 			uint32_t	   get_id() const { return _id; }
 			ResourceCache* get_cache() const { return _cache; }
+
+			friend bool operator==(const Handle& a, const Handle& b) {
+				return a._id == b._id && a._cache == b._cache;
+			}
 
 			Handle clone() const {
 				PERDU_ASSERT(valid(), "trying to clone invalid handle");
@@ -137,6 +142,11 @@ namespace perdu {
 				return { nullptr, 0 };
 			}
 			uint32_t id = _ntid.at(hash(name));
+			_data[id].refcount++;
+			return Handle{ this, id };
+		}
+
+		Handle get(uint32_t id) {
 			_data[id].refcount++;
 			return Handle{ this, id };
 		}
@@ -195,7 +205,7 @@ namespace perdu {
 
 		void destroy(uint32_t id) {
 			PERDU_ASSERT(_data[id].alive, "trying to destroy dead resource");
-			PERDU_LOG_INFO("freeing resource id " + std::to_string(id));
+			PERDU_LOG_DEBUG("freeing resource id " + std::to_string(id));
 			Slot& s = _data[id];
 
 			_destroyer(s.data);
@@ -218,7 +228,7 @@ namespace perdu {
 			return *_data[id].data;
 		}
 
-		T& get(uint32_t id) {
+		T& get_raw(uint32_t id) {
 			PERDU_ASSERT(valid(id), "trying to get invalid resource");
 			return *_data[id].data;
 		}

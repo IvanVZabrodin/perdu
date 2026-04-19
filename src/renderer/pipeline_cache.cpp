@@ -11,20 +11,6 @@
 #include <tuple>
 #include <utility>
 
-// clang-format off
-template<class... Ts>
-std::size_t TupleHash::operator()(const std::tuple<Ts...>& t) const {
-	std::size_t seed = 0;
-
-	std::apply([&](const auto&... xs) {
-			((seed ^= std::hash<std::decay_t<decltype(xs)>>{}(xs)
-			  + 0x9e3779b9 + (seed << 6) + (seed >> 2)), ...);
-			}, t);
-
-	return seed;
-}
-// clang-format on
-
 
 namespace perdu {
 	PipelineCache::PipelineCache(GPUContext& ctx) : _ctx(ctx) {}
