@@ -12,7 +12,6 @@
 namespace perdu {
 	static const char* PROJECTION_GLSL = R"(
 #version 450
-
 layout(local_size_x = 64) in;
 
 struct EntityInfo {
@@ -28,104 +27,109 @@ struct EntityInfo {
 layout(std430, set = 0, binding = 0) readonly buffer EntityBuffer {
     EntityInfo entities[];
 };
-
 layout(std430, set = 0, binding = 1) readonly buffer VertexBuffer {
     float vertices[];
 };
-
 layout(std430, set = 0, binding = 2) readonly buffer TransformBuffer {
     float transforms[];
 };
-
 layout(std430, set = 0, binding = 3) readonly buffer CameraBuffer {
-	float cammat[DIM * DIM];
-	float camtran[DIM];
+    float cammat[DIM * DIM];
+    float camtran[DIM];
 };
-
 layout(std430, set = 1, binding = 0) writeonly buffer OutputBuffer {
     vec4 projected[];
 };
-
 layout(std140, set = 2, binding = 0) uniform PC {
     uint total_vertices;
     uint entity_count;
 } pc;
 
+// Cache camtran and cammat in shared memory — all 64 threads in workgroup use them
+shared float s_cammat[DIM * DIM];
+shared float s_camtran[DIM];
+
 void main() {
     uint global_idx = gl_GlobalInvocationID.x;
+    uint local_id   = gl_LocalInvocationID.x;
+
+    // Cooperatively load camera data into shared memory
+    // DIM*DIM + DIM floats total, spread across threads
+    uint cam_floats = DIM * DIM + DIM;
+    for (uint i = local_id; i < cam_floats; i += 64) {
+        if (i < DIM * DIM)
+            s_cammat[i] = cammat[i];
+        else
+            s_camtran[i - DIM * DIM] = camtran[i - DIM * DIM];
+    }
+    barrier();
+    memoryBarrierShared();
+
     if (global_idx >= pc.total_vertices) return;
 
-	uint entity_idx = 0;
-    uint running    = 0;
-    for (uint i = 0; i < pc.entity_count; ++i) {
-        if (global_idx < running + entities[i].vertex_count) {
-            entity_idx = i;
+    // Binary search for entity — O(log n) vs O(n)
+    // Requires vertex_offset to be sorted ascending (it will be, allocation is sequential)
+    uint lo = 0, hi = pc.entity_count - 1, entity_idx = 0;
+    while (lo <= hi) {
+        uint mid = (lo + hi) >> 1;
+        uint end = entities[mid].vertex_offset + entities[mid].vertex_count;
+        if (global_idx < entities[mid].vertex_offset) {
+            hi = mid - 1;
+        } else if (global_idx >= end) {
+            lo = mid + 1;
+        } else {
+            entity_idx = mid;
             break;
         }
-        running += entities[i].vertex_count;
     }
 
-	EntityInfo e   = entities[entity_idx];
+    EntityInfo e   = entities[entity_idx];
     uint local_idx = global_idx - e.vertex_offset;
 
-	float v[DIM];
+    // Load vertex
+    float v[DIM];
+    uint vbase = e.vertex_offset * DIM + local_idx * DIM;
     for (uint i = 0; i < DIM; ++i)
-        v[i] = vertices[e.vertex_offset * DIM + local_idx * DIM + i];
+        v[i] = vertices[vbase + i];
 
-	float rotated1[DIM];
+    // Transform: rotate then translate in one pass to avoid a second temp array
+    float rotated1[DIM];
+    uint moff = e.matrix_offset;
     for (uint i = 0; i < DIM; ++i) {
-        rotated1[i] = 0.0;
+        float acc = 0.0;
         for (uint j = 0; j < DIM; ++j)
-            rotated1[i] += transforms[e.matrix_offset + i * DIM + j] * v[j];
+            acc += transforms[moff + i * DIM + j] * v[j];
+        rotated1[i] = acc + transforms[e.position_offset + i];
     }
 
-	for (uint i = 0; i < DIM; ++i)
-        rotated1[i] += transforms[e.position_offset + i];
-	
-	float translated[DIM];
-	for (uint i = 0; i < DIM; ++i)
-		translated[i] = rotated1[i] - camtran[i];
+    // Camera: translate then rotate, using shared memory
+    float rotated[DIM];
+    for (uint i = 0; i < DIM; ++i) {
+        float acc = 0.0;
+        for (uint j = 0; j < DIM; ++j)
+            acc += s_cammat[j * DIM + i] * (rotated1[j] - s_camtran[j]);
+        rotated[i] = acc;
+    }
 
-	// Step 2: rotate by camera orientation
-	float rotated[DIM];
-	for (uint i = 0; i < DIM; ++i) {
-		rotated[i] = 0.0;
-		for (uint j = 0; j < DIM; ++j)
-			rotated[i] += cammat[i * DIM + j] * translated[j];  // j*DIM+i instead of i*DIM+j
-	}
-
-	
-	float current[DIM];
+    // Iterative perspective projection
+    float current[DIM];
     for (uint i = 0; i < DIM; ++i) current[i] = rotated[i];
-	
-	bool visible = true;
 
     for (uint d = DIM; d > 2; --d) {
-        float w     = e.camera_dist - current[d - 1];
-		if (w < 0.0001) {
-			visible = false;
-			break;
-		}
+        float w = e.camera_dist - current[d - 1];
+        if (w < 0.0001) {
+            projected[global_idx] = vec4(0.0, 0.0, -2.0, v[0]);
+            return;
+        }
         float scale = e.camera_dist / w;
         for (uint i = 0; i < d - 1; ++i)
             current[i] *= scale;
     }
 
+    float w     = e.camera_dist - rotated[2];
+    float depth = clamp((e.camera_dist / w) * 0.5 + 0.5, 0.0, 1.0);
 
-	float w     = e.camera_dist - rotated[2];
-	if (!visible) {
-		// Push vertex far off screen so it doesn't affect rendering
-		projected[global_idx] = vec4(0.0, 0.0, -2.0, v[0]);
-		return;
-	}
-	float depth = e.camera_dist / w;  // perspective depth
-	depth       = clamp(depth * 0.5 + 0.5, 0.0, 1.0);  // map to [0,1]
-	
-
-	// current[0] = x, current[1] = y
-	// rotated[2] = depth (z before final projection)
-	// 1.0        = w
-	projected[global_idx] = vec4(current[0], current[1], depth, v[0]);
+    projected[global_idx] = vec4(current[0], current[1], depth, v[0]);
 }
 	)";
 

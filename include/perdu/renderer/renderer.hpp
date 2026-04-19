@@ -13,6 +13,7 @@ struct SDL_GPURenderPass;
 struct SDL_GPUCommandBuffer;
 struct SDL_GPUBuffer;
 struct SDL_GPUTransferBuffer;
+struct SDL_GPUFence;
 
 namespace perdu {
 	class PipelineCache;
@@ -26,11 +27,14 @@ namespace perdu {
 		uint32_t transform = 0;
 		// The entityinfo offset - not including `sizeof(EntityInfo)`
 		uint32_t entity	   = 0;
+
+		uint32_t indicies = 0;
 	};
 
 	class Renderer {
 	  public:
 		RenderView* view;
+		uint32_t	chunk_size = 1 << 20;
 
 		explicit Renderer(GPUContext& ctx, Scene& scene);
 		~Renderer();
@@ -61,8 +65,13 @@ namespace perdu {
 		SDL_GPUCommandBuffer*						_precmd;
 		SDL_GPURenderPass*							_pass;
 		SDL_GPUTransferBuffer*						_transfer;
+		SDL_GPUBuffer*								_inds;
+		uint32_t									_isize;
 		uint32_t									_tsize;
 		std::unordered_map<uint32_t, RenderOffsets> _dimtooff;
+		uint32_t									_indoff		 = 0;
+		bool										_prev_resize = false;
+		SDL_GPUFence*								_lastfence	 = nullptr;
 
 		struct DimBuffers
 		{
@@ -80,17 +89,22 @@ namespace perdu {
 		std::unordered_map<uint32_t, DimBuffers> _dim_buffers;
 
 		SDL_GPUTransferBuffer* get_transfer_buffer(uint32_t size);
-		DimBuffers&			   get_dim_buffers(uint32_t dim,
-											   uint32_t entsize,
-											   uint32_t vsize,
-											   uint32_t tsize);
+		std::pair<DimBuffers&, bool>
+		  get_dim_buffers(uint32_t				dim,
+						  uint32_t				entsize,
+						  uint32_t				vsize,
+						  uint32_t				tsize,
+						  SDL_GPUCommandBuffer* cmd = nullptr);
 
-		void ensure_dim_buf(SDL_GPUBuffer*& buf,
-							uint32_t&		size,
-							uint32_t		required,
-							uint32_t		usage = (1u << 4));
+		bool ensure_dim_buf(SDL_GPUBuffer*&		  buf,
+							uint32_t&			  size,
+							uint32_t			  required,
+							uint32_t			  usage = (1u << 4),
+							bool				  copy	= false,
+							SDL_GPUCommandBuffer* cmd	= nullptr);
 
-		RenderOffsets allocate_for_dim(uint32_t dim, uint32_t size);
+		RenderOffsets
+		  allocate_for_dim(uint32_t dim, uint32_t size, uint32_t indsize);
 
 		void collect_meshes();
 		void collect_transforms();

@@ -18,15 +18,20 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <memory>
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_gpu.h>
 #include <string>
-#include <sys/types.h>
+// #include <sys/types.h>
 #include <unordered_map>
 #include <vector>
+
+static uint32_t align_size(uint32_t size, uint32_t chunk) {
+	return (size + chunk - 1) / chunk * chunk;
+}
 
 void read_output_buffer(SDL_GPUDevice*				 device,
 						SDL_GPUBuffer*				 output_buffer,
@@ -144,7 +149,9 @@ namespace perdu {
 				SDL_ReleaseGPUBuffer(_ctx.device, bufs.output_buffer);
 		}
 
+		if (_lastfence) SDL_ReleaseGPUFence(_ctx.device, _lastfence);
 		if (_transfer) SDL_ReleaseGPUTransferBuffer(_ctx.device, _transfer);
+		if (_inds) SDL_ReleaseGPUBuffer(_ctx.device, _inds);
 
 		PERDU_LOG_INFO("renderer destroyed");
 	}
@@ -172,8 +179,12 @@ namespace perdu {
 		reg.remove<TransformCache>(e);
 	}
 
-	RenderOffsets Renderer::allocate_for_dim(uint32_t dim, uint32_t size) {
+	RenderOffsets Renderer::allocate_for_dim(uint32_t dim,
+											 uint32_t size,
+											 uint32_t indsize) {
 		RenderOffsets coff = _dimtooff[dim];
+		coff.indicies	   = _indoff;
+		_indoff			  += indsize;
 		_dimtooff[dim]	   = { .vert	  = coff.vert + size,
 							   .transform = coff.transform + dim * (dim + 1),
 							   .entity	  = coff.entity + 1 };
@@ -183,7 +194,6 @@ namespace perdu {
 
 	void Renderer::begin_frame() {
 		// auto s = std::chrono::system_clock::now();
-		SDL_WaitForGPUIdle(_ctx.device);
 		// auto e = std::chrono::system_clock::now();
 		// auto d = e - s;
 		// PERDU_LOG_DEBUG(
@@ -231,6 +241,12 @@ namespace perdu {
 		// collect_meshes();
 		// collect_transforms();
 		// compute_dispatch();
+		if (_prev_resize && _lastfence) {
+			SDL_WaitForGPUFences(_ctx.device, true, &_lastfence, 1);
+			SDL_ReleaseGPUFence(_ctx.device, _lastfence);
+		}
+		_prev_resize = false;
+		_lastfence	 = nullptr;
 
 		struct DirtyMesh
 		{
@@ -279,18 +295,19 @@ namespace perdu {
 									  // unallocated meshes
 				  state.offsets = allocate_for_dim(
 					state.dim,
-					cpu.vertices.size()); // TODO: Choose which size is best
+					cpu.vertices.size(),
+					cpu.indices.size()); // TODO: Choose which size is best
 				  state.allocated = true;
 				  state.vcount	  = m.vertices.size();
 				  dirty[state.dim].meshes.push_back(
 					{ &m.handle.get(), &state, true });
-				  PERDU_LOG_DEBUG("allocated at: { vert = "
-								  + std::to_string(state.offsets.vert)
-								  + ", transform = "
-								  + std::to_string(state.offsets.transform)
-								  + ", entity = "
-								  + std::to_string(state.offsets.entity)
-								  + " }");
+				  // PERDU_LOG_DEBUG("allocated at: { vert = "
+				  // 		  + std::to_string(state.offsets.vert)
+				  // 		  + ", transform = "
+				  // 		  + std::to_string(state.offsets.transform)
+				  // 		  + ", entity = "
+				  // 		  + std::to_string(state.offsets.entity)
+				  // 		  + " }");
 				  cpu.dirty = false;
 			  } else if (cpu.dirty) {
 				  dirty[state.dim].meshes.push_back(
@@ -320,19 +337,29 @@ namespace perdu {
 			camc._dirty = false;
 		}
 
+		if (dirty.empty() && !camdirty) return;
+		SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(_ctx.device);
+
+		_prev_resize |= ensure_dim_buf(_inds,
+									   _isize,
+									   _indoff * sizeof(uint32_t),
+									   SDL_GPU_BUFFERUSAGE_INDEX,
+									   true,
+									   cmd);
+		PERDU_LOG_DEBUG(std::to_string(_indoff * sizeof(uint32_t)));
 
 		for (auto dim : dims) {
 			auto& dirt = dirty[dim];
 			if (!camdirty && dirt.meshes.empty() && dirt.transforms.empty())
 				continue;
-			SDL_GPUCommandBuffer* cmd
-			  = SDL_AcquireGPUCommandBuffer(_ctx.device);
 
-			auto& dimbufs
+			auto [dimbufs, resize]
 			  = get_dim_buffers(dim,
 								_dimtooff[dim].entity * sizeof(EntityInfo),
 								_dimtooff[dim].vert * sizeof(float),
-								_dimtooff[dim].transform * sizeof(float));
+								_dimtooff[dim].transform * sizeof(float),
+								cmd);
+			_prev_resize |= resize;
 
 			if (dirt.transforms.size()
 				> 2) { /* then do full transform write later? */
@@ -353,6 +380,7 @@ namespace perdu {
 			{
 				SDL_GPUTransferBufferLocation src;
 				SDL_GPUBufferRegion			  dst;
+				// std::string					  debugname = "unkown";
 			};
 
 			std::vector<CopyMap> copies{};
@@ -367,7 +395,6 @@ namespace perdu {
 				auto rotmat = build_rotation_matrix(
 				  dim, camc.last_rot.extend(rotation_planes(dim)), true);
 				memcpy(mapped + coff, rotmat.data(), dim * dim * sizeof(float));
-				// tran.state->transferoffsets.transform = coff;
 				copies.push_back({
 					.src = { tb, coff },
 					.dst = { dimbufs.cam_buffer,
@@ -380,7 +407,6 @@ namespace perdu {
 
 			for (auto& mesh : dirt.meshes) {
 				CPUMesh& cpu = mesh.mesh->cpu;
-				GPUMesh& gpu = mesh.mesh->gpu;
 
 				if (mesh.requires_entity) {
 					EntityInfo info{ .voff	 = mesh.state->offsets.vert,
@@ -388,7 +414,7 @@ namespace perdu {
 									 .moff	 = mesh.state->offsets.transform,
 									 .poff
 									 = mesh.state->offsets.transform
-									 + mesh.state->dim * (mesh.state->dim + 1),
+									 + mesh.state->dim * (mesh.state->dim),
 									 .camera_dist = 2.0f,
 									 .dim		  = mesh.state->dim };
 					memcpy(mapped + coff, &info, sizeof(EntityInfo));
@@ -397,38 +423,48 @@ namespace perdu {
 						.dst = { dimbufs.entity_buffer,
 								 mesh.state->offsets.entity
 								   * (uint32_t) sizeof(EntityInfo),
-								 sizeof(EntityInfo) }
-					  });
-					// mesh.state->transferoffsets.entity = coff;
+								 sizeof(EntityInfo) },
+						// .debugname = "entity"
+					});
 					coff += sizeof(EntityInfo);
 				}
 
 				memcpy(mapped + coff,
 					   cpu.vertices.data(),
 					   cpu.vertices.size() * sizeof(float));
-				// mesh.state->transferoffsets.vert = coff;
 				copies.push_back({
 					.src = { tb, coff },
 					.dst
 					= { dimbufs.vertex_buffer,
 							mesh.state->offsets.vert * (uint32_t) sizeof(float),
 							(uint32_t) cpu.vertices.size()
-						  * (uint32_t) sizeof(float) }
+						  * (uint32_t) sizeof(float),
+						  },
+					// .debugname = "vert"
 				   });
 				coff += cpu.vertices.size() * sizeof(float);
 
-				gpu.ensure_indbuf(cpu.indices.size() * sizeof(uint32_t));
+				// gpu.ensure_indbuf(cpu.indices.size() * sizeof(uint32_t));
+
+				std::vector<uint32_t> offsetinds = cpu.indices;
+				for (auto& i : offsetinds) {
+					i += mesh.state->offsets.vert / dim;
+					PERDU_LOG_DEBUG("inds: " + std::to_string(i));
+				}
 
 				memcpy(mapped + coff,
-					   cpu.indices.data(),
-					   cpu.indices.size() * sizeof(float));
+					   offsetinds.data(),
+					   cpu.indices.size() * sizeof(uint32_t));
 
 				copies.push_back({
 					.src = { tb, coff },
-					.dst = { gpu.inds,
-							 0, (uint32_t) cpu.indices.size()
-							   * (uint32_t) sizeof(uint32_t) }
-				   });
+					.dst = { _inds,
+							 mesh.state->offsets.indicies
+							   * (uint32_t) sizeof(uint32_t),
+							 (uint32_t) cpu.indices.size()
+							   * (uint32_t) sizeof(uint32_t) },
+					// .debugname = "inds"
+				});
 				coff += cpu.indices.size() * sizeof(uint32_t);
 			}
 
@@ -442,8 +478,9 @@ namespace perdu {
 					.dst = { dimbufs.transform_buffer,
 							 tran.state->offsets.transform
 							   * (uint32_t) sizeof(float),
-							 dim * (dim + 1) * (uint32_t) sizeof(float) }
-				  });
+							 dim * (dim + 1) * (uint32_t) sizeof(float) },
+					// .debugname = "trans"
+				});
 				coff += dim * dim * sizeof(float);
 				memcpy(mapped + coff,
 					   tran.cache->last_pos.data(),
@@ -457,8 +494,15 @@ namespace perdu {
 			PERDU_LOG_DEBUG("cop " + std::to_string(copies.size()));
 			if (!copies.empty()) {
 				SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
-
 				for (auto& [src, dst] : copies) {
+					// PERDU_LOG_DEBUG("copy for "
+					// 				+ debug
+					// 				+ ": src off "
+					// 				+ std::to_string(src.offset)
+					// 				+ " dst off "
+					// 				+ std::to_string(dst.offset)
+					// 				+ " with size "
+					// 				+ std::to_string(dst.size));
 					SDL_UploadToGPUBuffer(copy, &src, &dst, false);
 				}
 
@@ -484,58 +528,81 @@ namespace perdu {
 			SDL_PushGPUComputeUniformData(cmd, 0, &uniforms[dim], sizeof(PC));
 
 			uint32_t groups_count = (uniforms[dim].total_vertices + 63) / 64;
-			PERDU_LOG_DEBUG("gcount: " + std::to_string(groups_count));
+			// PERDU_LOG_DEBUG("gcount: " + std::to_string(groups_count));
 			SDL_DispatchGPUCompute(pass, groups_count, 1, 1);
 
 			SDL_EndGPUComputePass(pass);
 
-			SDL_SubmitGPUCommandBuffer(cmd);
 
 #ifndef NDEBUG
-			std::vector<Vectorf> proj;
-			read_output_buffer(_ctx.device,
-							   dimbufs.output_buffer,
-							   uniforms[dim].total_vertices,
-							   proj);
-
-			for (size_t i = 0; i < proj.size(); ++i) {
-				PERDU_LOG_DEBUG("dim "
-								+ std::to_string(dim)
-								+ " vertex "
-								+ std::to_string(i)
-								+ ": "
-								+ perdu::to_string(proj[i]));
-			}
 #endif
 		}
+		if (_prev_resize)
+			_lastfence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+		else SDL_SubmitGPUCommandBuffer(cmd);
+
+		// 	auto [dimbufs, _] = get_dim_buffers(3, 0, 0, 0);
+		//
+		// 	std::vector<Vectorf> proj;
+		// 	read_output_buffer(
+		// 	  _ctx.device, dimbufs.output_buffer, uniforms[3].total_vertices,
+		// proj);
+		//
+		// 	for (size_t i = 0; i < proj.size(); ++i) {
+		// 		PERDU_LOG_DEBUG("dim "
+		// 						+ std::to_string(3)
+		// 						+ " vertex "
+		// 						+ std::to_string(i)
+		// 						+ ": "
+		// 						+ perdu::to_string(proj[i]));
+		// 	}
 	}
 
 	void Renderer::render() {
-		_scene.registry.view<Mesh, RenderState>().each([&](Mesh&		m,
-														   RenderState& state) {
-			auto& pipeline = _pipelines->get(
-			  vert,
-			  frag,
-			  m.primitive_type,
+		// SDL_WaitForGPUIdle(_ctx.device);
+		SDL_GPUBufferBinding ib{ _inds, 0 };
+		SDL_BindGPUIndexBuffer(_pass, &ib, SDL_GPU_INDEXELEMENTSIZE_32BIT);
+
+		using BatchKey
+		  = std::tuple<uint32_t, uint32_t, PrimitiveType, uint32_t>;
+
+
+		struct DrawBatch
+		{
+			BatchKey key;
+			uint32_t index_offset;
+			uint32_t index_count;
+		};
+
+		std::unordered_map<BatchKey, uint32_t, TupleHash> batch_counts;
+		_scene.registry.view<Mesh, RenderState>().each(
+		  [&](Mesh& m, RenderState& state) {
+			  batch_counts[{
+				  vert.get_id(), frag.get_id(), m.primitive_type, m.dim }]
+				+= m.handle->cpu.indices.size();
+			  // PERDU_LOG_DEBUG(std::to_string(state.offsets.indicies));
+		  });
+
+		uint32_t index_offset = 0;
+		for (auto& [key, index_count] : batch_counts) {
+			auto [tvert, tfrag, primitive_type, dim] = key;
+			auto& pipeline							 = _pipelines->get(
+			  _scene.assets.shaders.get(tvert),
+			  _scene.assets.shaders.get(tfrag),
+			  primitive_type,
 			  { .colour_format = view->target->colour.format });
 			pipeline.bind(_pass);
 
-			auto& bufs = get_dim_buffers(m.dim, 0, 0, 0);
-
-			SDL_GPUBufferBinding vb{
-				bufs.output_buffer,
-				(uint32_t) (state.offsets.vert * 4 * sizeof(float))
-			};
-
+			auto [bufs, _] = get_dim_buffers(dim, 0, 0, 0);
+			SDL_GPUBufferBinding vb{ bufs.output_buffer, 0 };
 			SDL_BindGPUVertexBuffers(_pass, 0, &vb, 1);
-
-			GPUMesh&			 gpu = m.handle->gpu;
-			CPUMesh&			 cpu = m.handle->cpu;
-			SDL_GPUBufferBinding ib{ gpu.inds, 0 };
-			SDL_BindGPUIndexBuffer(_pass, &ib, SDL_GPU_INDEXELEMENTSIZE_32BIT);
-			SDL_DrawGPUIndexedPrimitives(_pass, cpu.indices.size(), 1, 0, 0, 0);
-		});
+			PERDU_LOG_DEBUG(std::to_string(index_count));
+			SDL_DrawGPUIndexedPrimitives(
+			  _pass, index_count * 3, 1, index_offset, 0, 0);
+			index_offset += index_count;
+		}
 	}
+
 
 	void Renderer::end_frame() {
 		if (!_pass || !_cmd) return;
@@ -561,10 +628,12 @@ namespace perdu {
 		return _transfer;
 	}
 
-	Renderer::DimBuffers& Renderer::get_dim_buffers(uint32_t dim,
-													uint32_t entsize,
-													uint32_t vsize,
-													uint32_t tsize) {
+	std::pair<Renderer::DimBuffers&, bool>
+	  Renderer::get_dim_buffers(uint32_t			  dim,
+								uint32_t			  entsize,
+								uint32_t			  vsize,
+								uint32_t			  tsize,
+								SDL_GPUCommandBuffer* cmd) {
 		auto& bufs = _dim_buffers[dim];
 
 		uint32_t esize	  = entsize * sizeof(EntityInfo);
@@ -572,43 +641,74 @@ namespace perdu {
 		uint32_t transize = tsize * sizeof(float);
 		uint32_t outsize  = vsize * sizeof(float) * 4;
 		uint32_t camsize  = dim * (dim + 1) * sizeof(float);
+		bool	 needed	  = false;
 
-		ensure_dim_buf(bufs.entity_buffer,
-					   bufs.entity_capacity,
-					   esize,
-					   SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ);
-		ensure_dim_buf(bufs.vertex_buffer,
-					   bufs.vertex_capacity,
-					   vertsize,
-					   SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ);
-		ensure_dim_buf(bufs.transform_buffer,
-					   bufs.transform_capacity,
-					   transize,
-					   SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ);
-		ensure_dim_buf(bufs.output_buffer,
-					   bufs.output_capacity,
-					   outsize,
-					   SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE
-						 | SDL_GPU_BUFFERUSAGE_VERTEX);
-		uint32_t tesize = 0;
-		ensure_dim_buf(bufs.cam_buffer,
-					   tesize,
-					   camsize,
-					   SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ);
-		return bufs;
+		needed |= ensure_dim_buf(bufs.entity_buffer,
+								 bufs.entity_capacity,
+								 esize,
+								 SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ,
+								 true,
+								 cmd);
+		if (needed) PERDU_LOG_DEBUG("ent");
+		needed |= ensure_dim_buf(bufs.vertex_buffer,
+								 bufs.vertex_capacity,
+								 vertsize,
+								 SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ,
+								 true,
+								 cmd);
+		if (needed) PERDU_LOG_DEBUG("vert");
+		needed |= ensure_dim_buf(bufs.transform_buffer,
+								 bufs.transform_capacity,
+								 transize,
+								 SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ,
+								 true,
+								 cmd);
+		if (needed) PERDU_LOG_DEBUG("trans");
+		needed |= ensure_dim_buf(bufs.output_buffer,
+								 bufs.output_capacity,
+								 outsize,
+								 SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE
+								   | SDL_GPU_BUFFERUSAGE_VERTEX,
+								 false);
+		uint32_t tesize = camsize;
+		needed |= ensure_dim_buf(bufs.cam_buffer,
+								 tesize,
+								 camsize,
+								 SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ,
+								 false);
+		return { bufs, needed };
 	}
 
-	void Renderer::ensure_dim_buf(SDL_GPUBuffer*& buf,
-								  uint32_t&		  size,
-								  uint32_t		  required,
-								  uint32_t		  usage) {
-		if (required <= size) return;
-		if (buf != nullptr) SDL_ReleaseGPUBuffer(_ctx.device, buf);
+	bool Renderer::ensure_dim_buf(SDL_GPUBuffer*&		buf,
+								  uint32_t&				size,
+								  uint32_t				required,
+								  uint32_t				usage,
+								  bool					copy,
+								  SDL_GPUCommandBuffer* cmd) {
+		if (required <= size && buf != nullptr) return false;
+		PERDU_LOG_DEBUG("prev required: " + std::to_string(required));
+		required = align_size(required, chunk_size);
+		PERDU_LOG_DEBUG("resize size: "
+						+ std::to_string(required)
+						+ ". actual size: "
+						+ std::to_string(size));
 
 		SDL_GPUBufferCreateInfo info{ .usage = usage, .size = required };
 
-		buf	 = SDL_CreateGPUBuffer(_ctx.device, &info);
+		SDL_GPUBuffer* nbuf = SDL_CreateGPUBuffer(_ctx.device, &info);
+		if (copy && buf != nullptr) {
+			PERDU_LOG_DEBUG("resizing and copying buf");
+			SDL_GPUCopyPass*	  pass = SDL_BeginGPUCopyPass(cmd);
+			SDL_GPUBufferLocation src{ .buffer = buf, .offset = 0 };
+			SDL_GPUBufferLocation dst{ .buffer = nbuf, .offset = 0 };
+
+			SDL_CopyGPUBufferToBuffer(pass, &src, &dst, size, false);
+			SDL_EndGPUCopyPass(pass);
+		}
+		if (buf != nullptr) SDL_ReleaseGPUBuffer(_ctx.device, buf);
+		buf	 = nbuf;
 		size = required;
+		return true;
 	}
 
 	// void Renderer::collect_meshes() {

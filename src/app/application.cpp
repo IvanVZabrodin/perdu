@@ -42,9 +42,9 @@ namespace perdu {
 			scene.update(perdu::Phase::Update, dt);
 			scene.update(perdu::Phase::PostUpdate, dt);
 
+			renderer.begin_frame();
 			scene.update(perdu::Phase::PreRender, dt);
 			renderer.prerender();
-			renderer.begin_frame();
 			scene.update(perdu::Phase::Render, dt);
 			renderer.render();
 			scene.update(perdu::Phase::UI, dt);
