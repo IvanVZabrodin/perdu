@@ -5,6 +5,7 @@ add_executable(perdu_example
 compile_shaders(perdu_example
 	SOURCES	${CMAKE_SOURCE_DIR}/shaders/triangle.vert
 			${CMAKE_SOURCE_DIR}/shaders/triangle.frag
+			${CMAKE_SOURCE_DIR}/shaders/triangle2.frag
 	OUTPUT_DIR ${CMAKE_BINARY_DIR}/bin/shaders
 )
 

@@ -92,9 +92,21 @@ namespace perdu {
 
 			Handle clone() const {
 				PERDU_ASSERT(valid(), "trying to clone invalid handle");
+				// PERDU_ASSERT(!_weak, "trying to clone a weak handle");
 				_cache->_data[_id].refcount++;
 				return Handle{ _cache, _id };
 			}
+
+			// Handle weak_clone() const { return Handle{ _cache, _id, true }; }
+			//
+			// bool	is_weak() const { return _weak; }
+			// Handle& upgrade() {
+			// 	PERDU_ASSERT(_weak, "trying to upgrade a non weak handle");
+			// 	PERDU_ASSERT(valid(),
+			// 				 "trying to upgrade an invalid weak handle");
+			// 	_cache->_data[_id].refcount++;
+			// 	_weak = false;
+			// }
 
 		  private:
 			friend class ResourceCache;
@@ -104,6 +116,7 @@ namespace perdu {
 
 			ResourceCache* _cache = nullptr;
 			uint32_t	   _id	  = 0;
+			// bool		   _weak  = false;
 		};
 
 		ResourceCache() = default;
@@ -151,6 +164,8 @@ namespace perdu {
 			return Handle{ this, id };
 		}
 
+		uint32_t size() const { return _alive; }
+
 	  private:
 		friend class Handle;
 
@@ -167,7 +182,8 @@ namespace perdu {
 		std::vector<uint32_t>				   _free;
 		std::vector<Slot>					   _data;
 		std::unordered_map<uint32_t, uint32_t> _ntid;
-		DestroyFunction _destroyer = [](T* d) { delete d; };
+		uint32_t							   _alive = 0;
+		DestroyFunction _destroyer					  = [](T* d) { delete d; };
 
 		[[nodiscard]] uint32_t get_id() {
 			if (!_free.empty()) {
@@ -193,6 +209,8 @@ namespace perdu {
 						  .persistent = persistent,
 						  .refcount	  = 1 };
 
+			_alive++;
+
 			return Handle{ this, id };
 		}
 
@@ -212,6 +230,7 @@ namespace perdu {
 			s.data		 = nullptr;
 			s.persistent = false;
 			s.alive		 = false;
+			_alive--;
 
 			_free.push_back(id);
 			std::erase_if(_ntid,

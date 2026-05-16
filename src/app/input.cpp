@@ -69,4 +69,16 @@ namespace perdu {
 			}
 		}
 	}
+
+	void
+	  InputHandler::register_winexposed_handler(std::function<void()> handler) {
+		SDL_AddEventWatch(
+		  [](void* h, SDL_Event* e) {
+			  if (e->type == SDL_EVENT_WINDOW_EXPOSED) {
+				  (*static_cast<std::function<void()>*>(h))();
+			  }
+			  return true;
+		  },
+		  &handler);
+	}
 }

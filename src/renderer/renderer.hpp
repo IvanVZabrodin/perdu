@@ -1,5 +1,7 @@
 #pragma once
 
+#include "perdu/assets/asset_cache.hpp"
+#include "perdu/components/material.hpp"
 #include "perdu/components/transform.hpp"
 #include "perdu/core/maths.hpp"
 #include "perdu/renderer/gpu_context.hpp"
@@ -16,8 +18,7 @@ namespace perdu {
 		bool		  allocated = false;
 		RenderOffsets offsets;
 
-		RenderOffsets transferoffsets;
-		uint32_t	  vcount;
+		uint32_t vcount;
 	};
 
 	struct TransformCache
@@ -29,6 +30,16 @@ namespace perdu {
 		bool			   _dirty = true;
 
 		bool compare(const Transform& t);
+	};
+
+	struct MaterialCache
+	{
+		ShaderHandle last_vert;
+		ShaderHandle last_frag;
+
+		bool _dirty = true;
+
+		bool compare(const Material& m) const;
 	};
 
 	struct EntityInfo

@@ -3,6 +3,7 @@
 #include "entt/entity/entity.hpp"
 #include "perdu/app/input.hpp"
 #include "perdu/app/window.hpp"
+#include "perdu/core/clock.hpp"
 #include "perdu/engine/scene.hpp"
 #include "perdu/renderer/gpu_context.hpp"
 #include "perdu/renderer/renderer.hpp"
@@ -18,6 +19,8 @@ namespace perdu {
 				 uint32_t		  width	 = 800,
 				 uint32_t		  height = 600);
 
+		void do_frame();
+
 		void set_target_fps(uint32_t target);
 
 	  protected:
@@ -27,11 +30,15 @@ namespace perdu {
 		InputHandler input{ scene.registry };
 		Window		 window{ input, gpu };
 		RenderView	 view{ entt::null, nullptr };
+		Clock		 clock{};
 
 		virtual void on_start() {}
 		virtual void on_stop() {}
 
 	  private:
-		float target_dt = 1.0f / 60.0f;
+		uint32_t debug_frame = 0;
+		float	 debug_dsum	 = 0.0f;
+		float	 debug_dt	 = 0.0f;
+		float	 target_dt	 = 1.0f / 60.0f;
 	};
 }

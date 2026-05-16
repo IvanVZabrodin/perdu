@@ -43,6 +43,7 @@ layout(std430, set = 1, binding = 0) writeonly buffer OutputBuffer {
 layout(std140, set = 2, binding = 0) uniform PC {
     uint total_vertices;
     uint entity_count;
+	float aspect;
 } pc;
 
 // Cache camtran and cammat in shared memory — all 64 threads in workgroup use them
@@ -69,11 +70,11 @@ void main() {
 
     // Binary search for entity — O(log n) vs O(n)
     // Requires vertex_offset to be sorted ascending (it will be, allocation is sequential)
-    uint lo = 0, hi = pc.entity_count - 1, entity_idx = 0;
+    int lo = 0, hi = int(pc.entity_count) - 1, entity_idx = 0;
     while (lo <= hi) {
-        uint mid = (lo + hi) >> 1;
-        uint end = entities[mid].vertex_offset + entities[mid].vertex_count;
-        if (global_idx < entities[mid].vertex_offset) {
+        int mid = (lo + hi) >> 1;
+        int end = int(entities[mid].vertex_offset / DIM) + int(entities[mid].vertex_count);
+        if (global_idx < entities[mid].vertex_offset / DIM) {
             hi = mid - 1;
         } else if (global_idx >= end) {
             lo = mid + 1;
@@ -118,7 +119,7 @@ void main() {
     for (uint d = DIM; d > 2; --d) {
         float w = e.camera_dist - current[d - 1];
         if (w < 0.0001) {
-            projected[global_idx] = vec4(0.0, 0.0, -2.0, v[0]);
+            projected[global_idx] = vec4(0.0, 0.0, -2.0, 0.0);
             return;
         }
         float scale = e.camera_dist / w;
@@ -126,10 +127,13 @@ void main() {
             current[i] *= scale;
     }
 
-    float w     = e.camera_dist - rotated[2];
+    float w     = e.camera_dist - current[2];
     float depth = clamp((e.camera_dist / w) * 0.5 + 0.5, 0.0, 1.0);
+	// float off = 0;
+	// if (pc.entity_count > 1) off = entities[1].vertex_offset;
+	current[0] /= pc.aspect;
 
-    projected[global_idx] = vec4(current[0], current[1], depth, v[0]);
+    projected[global_idx] = vec4(current[0], current[1], depth, 0.0);
 }
 	)";
 

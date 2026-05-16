@@ -1,13 +1,36 @@
 #pragma once
 
 #include "perdu/assets/asset_cache.hpp"
+#include "perdu/components/material.hpp"
 #include "perdu/engine/scene.hpp"
 #include "perdu/renderer/gpu_context.hpp"
+#include "perdu/renderer/mesh.hpp"
 #include "perdu/renderer/pipeline.hpp"
 
 #include <cstdint>
 #include <entt/entt.hpp>
 #include <memory>
+#include <unordered_map>
+
+struct TupleHash
+{
+	template <class... Ts>
+	std::size_t operator()(const std::tuple<Ts...>& t) const {
+		std::size_t seed = 0;
+
+		std::apply(
+		  [&](const auto&... xs) {
+			  ((seed ^= std::hash<std::decay_t<decltype(xs)>>{}(xs)
+					  + 0x9e3779b9
+					  + (seed << 6)
+					  + (seed >> 2)),
+			   ...);
+		  },
+		  t);
+
+		return seed;
+	}
+};
 
 struct SDL_GPURenderPass;
 struct SDL_GPUCommandBuffer;
@@ -19,8 +42,14 @@ namespace perdu {
 	class PipelineCache;
 	class ComputeCache;
 
+	using BatchKey = std::tuple<uint32_t, uint32_t, PrimitiveType, uint32_t>;
 	struct RenderOffsets
 	{
+		struct IndOff
+		{
+			BatchKey key;
+			uint32_t off;
+		};
 		// The vertex offset - not including `sizeof(float)`
 		uint32_t vert	   = 0;
 		// The transform offset - not including `sizeof(float)`
@@ -28,13 +57,13 @@ namespace perdu {
 		// The entityinfo offset - not including `sizeof(EntityInfo)`
 		uint32_t entity	   = 0;
 
-		uint32_t indicies = 0;
+		IndOff indicies = {};
 	};
 
 	class Renderer {
 	  public:
 		RenderView* view;
-		uint32_t	chunk_size = 1 << 20;
+		uint32_t	chunk_size = 1 << 5;
 
 		explicit Renderer(GPUContext& ctx, Scene& scene);
 		~Renderer();
@@ -54,6 +83,9 @@ namespace perdu {
 		void on_cam_construct(entt::registry& reg, entt::entity e);
 		void on_cam_destruct(entt::registry& reg, entt::entity e);
 
+		void on_material_construct(entt::registry& reg, entt::entity e);
+		void on_material_destruct(entt::registry& reg, entt::entity e);
+
 		ShaderHandle vert, frag;
 
 	  private:
@@ -72,6 +104,24 @@ namespace perdu {
 		uint32_t									_indoff		 = 0;
 		bool										_prev_resize = false;
 		SDL_GPUFence*								_lastfence	 = nullptr;
+		SDL_GPUFence*								_renderfence = nullptr;
+		uint32_t									_batchoff	 = 0;
+		uint32_t									_batchchunk	 = 1 << 10;
+
+		std::vector<std::tuple<uint32_t, uint32_t, uint32_t>> _indcopies;
+
+
+		struct AllocBatch
+		{
+			BatchKey key;
+			uint32_t offset;
+			uint32_t count;
+			uint32_t size;
+		};
+
+		std::unordered_map<BatchKey, AllocBatch, TupleHash> _indbatches;
+
+
 
 		struct DimBuffers
 		{
@@ -103,8 +153,15 @@ namespace perdu {
 							bool				  copy	= false,
 							SDL_GPUCommandBuffer* cmd	= nullptr);
 
-		RenderOffsets
-		  allocate_for_dim(uint32_t dim, uint32_t size, uint32_t indsize);
+		RenderOffsets allocate_for_dim(uint32_t		 dim,
+									   uint32_t		 size,
+									   uint32_t		 indsize,
+									   PrimitiveType pt);
+
+		RenderOffsets::IndOff create_ind_off(uint32_t		 size,
+											 const Material& mat,
+											 PrimitiveType	 pt,
+											 uint32_t		 dim);
 
 		void collect_meshes();
 		void collect_transforms();

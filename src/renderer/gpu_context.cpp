@@ -4,6 +4,7 @@
 #include "perdu/core/log.hpp"
 
 #include <SDL3/SDL_gpu.h>
+#include <SDL3/SDL_hints.h>
 #include <SDL3/SDL_init.h>
 
 namespace perdu {
@@ -19,6 +20,7 @@ namespace perdu {
 		  = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, false, nullptr);
 #else
 		device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, true, nullptr);
+		SDL_SetHint(SDL_HINT_RENDER_VULKAN_DEBUG, "1");
 #endif
 
 		PERDU_ASSERT(device,

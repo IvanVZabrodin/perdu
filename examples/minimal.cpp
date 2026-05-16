@@ -4,6 +4,7 @@
 #include "perdu/assets/assets.hpp"
 #include "perdu/assets/resource_cache.hpp"
 #include "perdu/components/camera.hpp"
+#include "perdu/components/material.hpp"
 #include "perdu/components/mesh.hpp"
 #include "perdu/components/transform.hpp"
 #include "perdu/core/log.hpp"
@@ -11,9 +12,11 @@
 #include "perdu/ecs/auto_system.hpp"
 #include "perdu/engine/entity.hpp"
 #include "perdu/engine/scene.hpp"
+#include "perdu/renderer/gpu_context.hpp"
 #include "perdu/renderer/mesh.hpp"
 #include "perdu/renderer/shader.hpp"
 
+#include <cstdint>
 #include <numbers>
 #include <string>
 #include <type_traits>
@@ -35,7 +38,7 @@ std::string primitive_to_string(perdu::PrimitiveType p) {
 	}
 }
 
-constexpr int mdim = 10;
+int mdim = 8;
 
 class MyApp : public perdu::Application {
 	void on_start() {
@@ -45,6 +48,14 @@ class MyApp : public perdu::Application {
 							 { perdu::asset_path("shaders/triangle.frag.spv"),
 							   perdu::ShaderStage::Fragment }),
 		  true);
+
+		auto frag2 = scene.assets.shaders.store(
+		  "triangle2.frag",
+		  perdu::load_shader(gpu,
+							 { perdu::asset_path("shaders/triangle2.frag.spv"),
+							   perdu::ShaderStage::Fragment }),
+		  true);
+
 
 		auto vert = scene.assets.shaders.store(
 		  "triangle.vert",
@@ -67,7 +78,9 @@ class MyApp : public perdu::Application {
 
 		perdu::Entity e = scene.vars.set("testentity", scene.create());
 		auto&		  m = e.add<perdu::Mesh>(
+		  // perdu::load_mesh_from_obj(perdu::asset_path("map-bump.obj")));
 		  perdu::make_cube(mdim, 1.0f, perdu::PrimitiveType::Triangles));
+		e.add<perdu::Material>(vert, frag);
 		e.add<perdu::Transform>(
 		  perdu::Vectorf{ 0.0f, 0.0f, -3.0f }.extend(mdim));
 		auto h
@@ -113,8 +126,8 @@ class MyApp : public perdu::Application {
 					}
 				case perdu::Key::Space:
 					{
-						scene.registry.view<perdu::Mesh>().each(
-						  [&](perdu::Mesh& me) {
+						scene.registry.view<perdu::Mesh, perdu::Material>()
+						  .each([&](perdu::Mesh& me, perdu::Material& mat) {
 							  me.indices = perdu::make_cube(
 											 me.dim,
 											 1.0f,
@@ -124,6 +137,7 @@ class MyApp : public perdu::Application {
 								std::to_string(me.indices.size()));
 							  me.primitive_type
 								= next_enum(me.primitive_type, 3);
+							  mat._dirty = true;
 							  me.recompute();
 						  });
 						PERDU_LOG_DEBUG(
@@ -146,7 +160,12 @@ class MyApp : public perdu::Application {
 						  "m" + std::to_string(tmin), l, true);
 						me.handle = h;
 						float z	  = (float) (++tmin) * -3.0f;
-						auto& tr  = en.add<perdu::Transform>(
+						auto& mat = en.add<perdu::Material>(
+						  scene.assets.shaders.get("triangle.vert"),
+						  tmin % 2
+							? scene.assets.shaders.get("triangle.frag")
+							: scene.assets.shaders.get("triangle2.frag"));
+						auto& tr = en.add<perdu::Transform>(
 						  perdu::Vectorf{ 0.0, 0.0, z }.extend(m.dim));
 						break;
 					}
@@ -154,10 +173,50 @@ class MyApp : public perdu::Application {
 			}
 		});
 	}
+
+	void on_stop() {
+		PERDU_LOG_INFO("mesh count: "
+					   + std::to_string(scene.assets.meshes.size()));
+	}
 };
 
 static constexpr float rotspeed	 = std::numbers::pi_v<float> / 2.0f;
 static constexpr float movespeed = 2.0f;
+
+int sub500count = 0;
+int made		= 0;
+
+static void mtest(perdu::Scene& scene, float dt) {
+	double* fps = scene.vars.try_get<double>("fps");
+	double	fp	= (fps ? *fps : 0);
+	// PERDU_LOG_INFO(std::to_string(fp));
+	if (fp < 500.0f) sub500count++;
+	else sub500count = 0;
+
+
+	if (sub500count >= 10 * 60)
+		scene.get_ctx<perdu::InputHandler*>()->bus().emit<events::WindowQuit>(
+		  {});
+	else {
+		auto&				 mk = scene.vars.get<perdu::Entity>("testentity");
+		perdu::PrimitiveType pt = mk.get<perdu::Mesh>().primitive_type;
+		auto				 en = scene.create();
+		auto&	me	 = en.add<perdu::Mesh>(perdu::make_cube(mdim, 1.0f, pt));
+		size_t& tmin = scene.vars.get<size_t>("tmin");
+		auto	l = perdu::load_mesh(*scene.get_ctx<perdu::GPUContext*>(), me);
+		l->cpu.debugname = "m" + std::to_string(tmin);
+		auto h = scene.assets.meshes.store("m" + std::to_string(tmin), l, true);
+		me.handle = h;
+		float z	  = (float) (++tmin) * -3.0f;
+		auto& tr  = en.add<perdu::Transform>(
+		  perdu::Vectorf{ 0.0, 0.0, z }.extend(mdim));
+		made++;
+
+		if (made % 200 == 0)
+			PERDU_LOG_INFO("mesh count: "
+						   + std::to_string(scene.assets.meshes.size()));
+	}
+};
 
 static void inputtest(perdu::Scene& scene, float dt) {
 	auto& state = scene.get_ctx<perdu::InputHandler::InputState>();
@@ -183,12 +242,14 @@ static void inputtest(perdu::Scene& scene, float dt) {
 	// 	  }
 	//   });
 
+	float speedmul = (state.is_key_down(perdu::Key::LShift) ? 10.0f : 1.0f);
+
 	auto& t = e.get<perdu::Transform>();
 	if (state.is_key_down(perdu::Key::W)) {
-		t.position[scene.vars.get<size_t>("cpos")] += movespeed * dt;
+		t.position[scene.vars.get<size_t>("cpos")] += movespeed * dt * speedmul;
 	}
 	if (state.is_key_down(perdu::Key::S)) {
-		t.position[scene.vars.get<size_t>("cpos")] -= movespeed * dt;
+		t.position[scene.vars.get<size_t>("cpos")] -= movespeed * dt * speedmul;
 	}
 	if (state.is_key_down(perdu::Key::Up)) {
 		t.rotate_plane(scene.vars.get<size_t>("crot"), rotspeed * dt);
@@ -199,13 +260,15 @@ static void inputtest(perdu::Scene& scene, float dt) {
 }
 
 static perdu::AutoSystem _inputtest{ inputtest, perdu::Phase::Input };
+// static perdu::AutoSystem _mtest{ mtest, perdu::Phase::Update };
 
-int main() {
+int main(int argc, char* argv[]) {
 	perdu::log::set_min_level(perdu::log::Level::Debug);
 	// PERDU_LOG_DEBUG("debug message");
 	// PERDU_LOG_INFO("info message");
 	// PERDU_LOG_WARN("warn message");
 	// PERDU_LOG_ERROR("error message");
+	if (argc > 1) mdim = std::stoi(argv[1]);
 	MyApp app{};
 	app.set_target_fps(0);
 	app.run("hi", 600, 600);
