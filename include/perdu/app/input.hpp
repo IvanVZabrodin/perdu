@@ -4,6 +4,7 @@
 #include <bitset>
 #include <cstdint>
 #include <entt/entt.hpp>
+#include <functional>
 #include <limits>
 
 namespace perdu {
@@ -123,6 +124,8 @@ namespace perdu {
 		EventQueue&		  queue() { return _queue; }
 
 		void poll();
+
+		void register_winexposed_handler(std::function<void()> handler);
 
 	  private:
 		EventBus   _bus;

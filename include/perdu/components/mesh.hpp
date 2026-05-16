@@ -22,6 +22,8 @@ namespace perdu {
 		void recompute_via_cpumesh(CPUMesh& cpu) const;
 	};
 
+	Mesh load_mesh_from_obj(std::string file);
+
 	inline Mesh make_cube(uint32_t		dim,
 						  float			half_extent = 1.0f,
 						  PrimitiveType mode		= PrimitiveType::Lines) {
