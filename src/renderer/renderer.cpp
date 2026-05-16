@@ -2,6 +2,7 @@
 
 #include "perdu/app/input.hpp"
 #include "perdu/assets/assets.hpp"
+#include "perdu/components/material.hpp"
 #include "perdu/components/mesh.hpp"
 #include "perdu/components/transform.hpp"
 #include "perdu/core/assert.hpp"
@@ -21,6 +22,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <immintrin.h>
 #include <memory>
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_gpu.h>
@@ -28,6 +30,11 @@
 // #include <sys/types.h>
 #include <unordered_map>
 #include <vector>
+
+// The idea:
+// Indices are in one buffer, but separated into separate buckets (that grow)
+// which are defined by the object's material and primitive type
+// Vertices are the exact same
 
 static uint32_t align_size(uint32_t size, uint32_t chunk) {
 	return (size + chunk - 1) / chunk * chunk;
@@ -75,6 +82,7 @@ void read_output_buffer(SDL_GPUDevice*				 device,
 	SDL_ReleaseGPUTransferBuffer(device, tb);
 }
 
+template <typename T = float>
 void debug_read_transfer_buffer(SDL_GPUDevice* device,
 								SDL_GPUBuffer* gpu_buffer,
 								uint32_t	   size) {
@@ -104,8 +112,8 @@ void debug_read_transfer_buffer(SDL_GPUDevice* device,
 	SDL_ReleaseGPUFence(device, fence);
 
 	// Read
-	float*	 mapped = (float*) SDL_MapGPUTransferBuffer(device, tb, false);
-	uint32_t count	= size / sizeof(float);
+	T*		 mapped = (T*) SDL_MapGPUTransferBuffer(device, tb, false);
+	uint32_t count	= size / sizeof(T);
 	for (uint32_t i = 0; i < count; ++i)
 		PERDU_LOG_DEBUG(
 		  "float[" + std::to_string(i) + "] = " + std::to_string(mapped[i]));
@@ -118,7 +126,6 @@ void debug_read_transfer_buffer(SDL_GPUDevice* device,
 namespace perdu {
 	Renderer::Renderer(GPUContext& ctx, Scene& scene) :
 		_ctx(ctx), _scene(scene) {
-		SDL_SetHint(SDL_HINT_RENDER_VULKAN_DEBUG, "1");
 		_pipelines = std::make_unique<PipelineCache>(_ctx);
 		_computes  = std::make_unique<ComputeCache>(_ctx);
 
@@ -126,6 +133,11 @@ namespace perdu {
 		  .connect<&Renderer::on_mesh_construct>(*this);
 		_scene.registry.on_destroy<Mesh>().connect<&Renderer::on_mesh_destruct>(
 		  *this);
+
+		_scene.registry.on_construct<Material>()
+		  .connect<&Renderer::on_material_construct>(*this);
+		_scene.registry.on_destroy<Material>()
+		  .connect<&Renderer::on_material_destruct>(*this);
 
 		_scene.registry.on_construct<Camera>()
 		  .connect<&Renderer::on_cam_construct>(*this);
@@ -150,6 +162,7 @@ namespace perdu {
 		}
 
 		if (_lastfence) SDL_ReleaseGPUFence(_ctx.device, _lastfence);
+		if (_renderfence) SDL_ReleaseGPUFence(_ctx.device, _renderfence);
 		if (_transfer) SDL_ReleaseGPUTransferBuffer(_ctx.device, _transfer);
 		if (_inds) SDL_ReleaseGPUBuffer(_ctx.device, _inds);
 
@@ -157,7 +170,9 @@ namespace perdu {
 	}
 
 	void Renderer::on_resize(uint32_t width, uint32_t height) {
-		PERDU_LOG_DEBUG("reacting to resize");
+		if (view) {
+			_scene.registry.get<TransformCache>(view->camera)._dirty = true;
+		}
 	}
 
 	void Renderer::on_mesh_construct(entt::registry& reg, entt::entity e) {
@@ -179,11 +194,22 @@ namespace perdu {
 		reg.remove<TransformCache>(e);
 	}
 
-	RenderOffsets Renderer::allocate_for_dim(uint32_t dim,
-											 uint32_t size,
-											 uint32_t indsize) {
+	void Renderer::on_material_construct(entt::registry& reg, entt::entity e) {
+		const Material& m = reg.get<Material>(e);
+		reg.emplace<MaterialCache>(e, m.vert, m.frag, true);
+	}
+
+	void Renderer::on_material_destruct(entt::registry& reg, entt::entity e) {
+		reg.remove<MaterialCache>(e);
+	}
+
+
+	RenderOffsets Renderer::allocate_for_dim(uint32_t	   dim,
+											 uint32_t	   size,
+											 uint32_t	   indsize,
+											 PrimitiveType pt) {
 		RenderOffsets coff = _dimtooff[dim];
-		coff.indicies	   = _indoff;
+		coff.indicies	   = create_ind_off(indsize, { vert, frag }, pt, dim);
 		_indoff			  += indsize;
 		_dimtooff[dim]	   = { .vert	  = coff.vert + size,
 							   .transform = coff.transform + dim * (dim + 1),
@@ -198,7 +224,15 @@ namespace perdu {
 		// auto d = e - s;
 		// PERDU_LOG_DEBUG(
 		//   std::to_string(std::chrono::duration<float>(d).count()));
+		// SDL_WaitForGPUIdle(_ctx.device);
+		if (_renderfence) {
+			SDL_WaitForGPUFences(_ctx.device, true, &_renderfence, 1);
+			SDL_ReleaseGPUFence(_ctx.device, _renderfence);
+		}
 		_cmd = SDL_AcquireGPUCommandBuffer(_ctx.device);
+		PERDU_ASSERT(_cmd,
+					 "failed to create command buffer: "
+					   + std::string(SDL_GetError()));
 
 		GPUTexture col = view->target->load_texture(_cmd);
 		// if (!SDL_AcquireGPUSwapchainTexture(
@@ -216,6 +250,7 @@ namespace perdu {
 			.clear_color = { 0.1f, 0.1f, 0.1f, 1.0f },
 			.load_op	 = SDL_GPU_LOADOP_CLEAR,
 			.store_op	 = SDL_GPU_STOREOP_STORE,
+			.cycle		 = true
 		};
 
 		SDL_GPUDepthStencilTargetInfo depth{
@@ -224,6 +259,7 @@ namespace perdu {
 			.load_op	 = SDL_GPU_LOADOP_CLEAR,
 			.store_op	 = SDL_GPU_STOREOP_DONT_CARE,
 		};
+
 
 		_pass = SDL_BeginGPURenderPass(_cmd, &color, 1, &depth);
 	}
@@ -237,6 +273,11 @@ namespace perdu {
 	 * Transfer buffer is the max size
 	 * */
 
+	/*
+	 * So we sort the output verts to match with inds?
+	 * what about instancing?
+	 */
+
 	void Renderer::prerender() {
 		// collect_meshes();
 		// collect_transforms();
@@ -247,6 +288,7 @@ namespace perdu {
 		}
 		_prev_resize = false;
 		_lastfence	 = nullptr;
+		_indcopies	 = {};
 
 		struct DirtyMesh
 		{
@@ -265,17 +307,20 @@ namespace perdu {
 		{
 			std::vector<DirtyMesh>		meshes;
 			std::vector<DirtyTransform> transforms;
+			std::vector<DirtyMesh>		inds;
 		};
 
 		struct PC
 		{
 			uint32_t total_vertices;
 			uint32_t entity_count;
+			float	 aspect;
 		};
 
 		std::unordered_map<uint32_t, DirtyDim> dirty;
 		std::unordered_map<uint32_t, PC>	   uniforms;
 		std::set<uint32_t>					   dims;
+		std::set<uint32_t>					   hmc;
 
 		_scene.registry
 		  .view<Mesh,
@@ -293,14 +338,16 @@ namespace perdu {
 			  dims.insert(m.dim);
 			  if (!state.allocated) { // Allocate stable indices for
 									  // unallocated meshes
-				  state.offsets = allocate_for_dim(
-					state.dim,
-					cpu.vertices.size(),
-					cpu.indices.size()); // TODO: Choose which size is best
+				  state.offsets	  = allocate_for_dim(state.dim,
+													 cpu.vertices.size(),
+													 cpu.indices.size(),
+													 m.primitive_type);
 				  state.allocated = true;
 				  state.vcount	  = m.vertices.size();
 				  dirty[state.dim].meshes.push_back(
 					{ &m.handle.get(), &state, true });
+				  dirty[state.dim].inds.push_back({ &m.handle.get(), &state });
+				  hmc.insert(m.handle.get_id());
 				  // PERDU_LOG_DEBUG("allocated at: { vert = "
 				  // 		  + std::to_string(state.offsets.vert)
 				  // 		  + ", transform = "
@@ -313,6 +360,8 @@ namespace perdu {
 				  dirty[state.dim].meshes.push_back(
 					{ &m.handle.get(), &state });
 				  cpu.dirty = false;
+				  dirty[state.dim].inds.push_back({ &m.handle.get(), &state });
+				  hmc.insert(m.handle.get_id());
 			  }
 
 			  if (!tcache.compare(transform)
@@ -326,6 +375,28 @@ namespace perdu {
 			  }
 		  });
 
+		_scene.registry.view<Mesh, RenderState, Material, MaterialCache>().each(
+		  [&](Mesh&			 m,
+			  RenderState&	 state,
+			  Material&		 material,
+			  MaterialCache& mcache) {
+			  if (!mcache.compare(material)
+				  || mcache._dirty
+				  || material._dirty) {
+				  state.offsets.indicies
+					= create_ind_off(m.handle->cpu.indices.size(),
+									 material,
+									 m.primitive_type,
+									 m.dim);
+				  if (!hmc.contains(m.handle.get_id()))
+					  dirty[state.dim].inds.push_back(
+						{ &m.handle.get(), &state });
+				  mcache.last_frag = material.frag;
+				  mcache.last_vert = material.vert;
+				  mcache._dirty	   = false;
+				  material._dirty  = false;
+			  }
+		  });
 		Transform&		camt = _scene.registry.get<Transform>(view->camera);
 		TransformCache& camc
 		  = _scene.registry.get<TransformCache>(view->camera);
@@ -342,11 +413,33 @@ namespace perdu {
 
 		_prev_resize |= ensure_dim_buf(_inds,
 									   _isize,
-									   _indoff * sizeof(uint32_t),
+									   _batchoff * sizeof(uint32_t),
 									   SDL_GPU_BUFFERUSAGE_INDEX,
 									   true,
 									   cmd);
-		PERDU_LOG_DEBUG(std::to_string(_indoff * sizeof(uint32_t)));
+		// PERDU_LOG_DEBUG(std::to_string(_indoff * sizeof(uint32_t)));
+
+		if (!_indcopies.empty()) {
+			SDL_GPUCopyPass* pass = SDL_BeginGPUCopyPass(cmd);
+
+			for (auto& [soff, doff, si] : _indcopies) {
+				PERDU_LOG_DEBUG("src: "
+								+ std::to_string(soff)
+								+ ". dst: "
+								+ std::to_string(doff)
+								+ ". size: "
+								+ std::to_string(si));
+				SDL_GPUBufferLocation src{ _inds,
+										   soff * (uint32_t) sizeof(uint32_t) };
+				SDL_GPUBufferLocation dst{ _inds,
+										   doff * (uint32_t) sizeof(uint32_t) };
+
+				SDL_CopyGPUBufferToBuffer(
+				  pass, &src, &dst, si * sizeof(uint32_t), false);
+			}
+
+			SDL_EndGPUCopyPass(pass);
+		}
 
 		for (auto dim : dims) {
 			auto& dirt = dirty[dim];
@@ -405,6 +498,35 @@ namespace perdu {
 				coff += dim * sizeof(float);
 			}
 
+			uniforms[dim].aspect
+			  = (float) view->target->width / (float) view->target->height;
+
+			for (auto& mesh : dirt.inds) {
+				CPUMesh&			  cpu		 = mesh.mesh->cpu;
+				std::vector<uint32_t> offsetinds = cpu.indices;
+				for (auto& i : offsetinds) {
+					i += mesh.state->offsets.vert / dim;
+				}
+
+				memcpy(mapped + coff,
+					   offsetinds.data(),
+					   cpu.indices.size() * sizeof(uint32_t));
+
+				// PERDU_LOG_DEBUG("indoff: "
+				// 				+ std::to_string(mesh.state->offsets.indicies));
+				auto& ioff = mesh.state->offsets.indicies;
+				copies.push_back({
+					.src = { tb, coff },
+					.dst = { _inds,
+							 (_indbatches[ioff.key].offset + ioff.off)
+							   * (uint32_t) sizeof(uint32_t),
+							 (uint32_t) cpu.indices.size()
+							   * (uint32_t) sizeof(uint32_t) },
+					// .debugname = "inds"
+				});
+				coff += cpu.indices.size() * sizeof(uint32_t);
+			}
+
 			for (auto& mesh : dirt.meshes) {
 				CPUMesh& cpu = mesh.mesh->cpu;
 
@@ -445,27 +567,6 @@ namespace perdu {
 				coff += cpu.vertices.size() * sizeof(float);
 
 				// gpu.ensure_indbuf(cpu.indices.size() * sizeof(uint32_t));
-
-				std::vector<uint32_t> offsetinds = cpu.indices;
-				for (auto& i : offsetinds) {
-					i += mesh.state->offsets.vert / dim;
-					PERDU_LOG_DEBUG("inds: " + std::to_string(i));
-				}
-
-				memcpy(mapped + coff,
-					   offsetinds.data(),
-					   cpu.indices.size() * sizeof(uint32_t));
-
-				copies.push_back({
-					.src = { tb, coff },
-					.dst = { _inds,
-							 mesh.state->offsets.indicies
-							   * (uint32_t) sizeof(uint32_t),
-							 (uint32_t) cpu.indices.size()
-							   * (uint32_t) sizeof(uint32_t) },
-					// .debugname = "inds"
-				});
-				coff += cpu.indices.size() * sizeof(uint32_t);
 			}
 
 			for (auto& tran : dirt.transforms) {
@@ -491,7 +592,7 @@ namespace perdu {
 
 			SDL_UnmapGPUTransferBuffer(_ctx.device, tb);
 
-			PERDU_LOG_DEBUG("cop " + std::to_string(copies.size()));
+			// PERDU_LOG_DEBUG("cop " + std::to_string(copies.size()));
 			if (!copies.empty()) {
 				SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
 				for (auto& [src, dst] : copies) {
@@ -540,51 +641,58 @@ namespace perdu {
 		if (_prev_resize)
 			_lastfence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
 		else SDL_SubmitGPUCommandBuffer(cmd);
+		// SDL_WaitForGPUIdle(_ctx.device);
+		// debug_read_transfer_buffer<uint32_t>(_ctx.device, _inds, _isize);
 
-		// 	auto [dimbufs, _] = get_dim_buffers(3, 0, 0, 0);
+		// auto [dimbufs, _] = get_dim_buffers(3, 0, 0, 0);
 		//
-		// 	std::vector<Vectorf> proj;
-		// 	read_output_buffer(
-		// 	  _ctx.device, dimbufs.output_buffer, uniforms[3].total_vertices,
-		// proj);
+		// std::vector<Vectorf> proj;
+		// read_output_buffer(
+		//   _ctx.device, dimbufs.output_buffer, uniforms[3].total_vertices,
+		//   proj);
 		//
-		// 	for (size_t i = 0; i < proj.size(); ++i) {
-		// 		PERDU_LOG_DEBUG("dim "
-		// 						+ std::to_string(3)
-		// 						+ " vertex "
-		// 						+ std::to_string(i)
-		// 						+ ": "
-		// 						+ perdu::to_string(proj[i]));
-		// 	}
+		// for (size_t i = 0; i < proj.size(); ++i) {
+		// 	PERDU_LOG_DEBUG("dim "
+		// 					+ std::to_string(3)
+		// 					+ " vertex "
+		// 					+ std::to_string(i)
+		// 					+ ": "
+		// 					+ perdu::to_string(proj[i]));
+		// }
 	}
 
 	void Renderer::render() {
 		// SDL_WaitForGPUIdle(_ctx.device);
+		// debug_read_transfer_buffer<uint32_t>(_ctx.device, _inds, _isize);
 		SDL_GPUBufferBinding ib{ _inds, 0 };
 		SDL_BindGPUIndexBuffer(_pass, &ib, SDL_GPU_INDEXELEMENTSIZE_32BIT);
 
-		using BatchKey
-		  = std::tuple<uint32_t, uint32_t, PrimitiveType, uint32_t>;
+		// using BatchKey
+		//   = std::tuple<uint32_t, uint32_t, PrimitiveType, uint32_t>;
+		//
+		//
+		// struct DrawBatch
+		// {
+		// 	BatchKey key;
+		// 	uint32_t index_offset;
+		// 	uint32_t index_count;
+		// };
 
+		// std::unordered_map<BatchKey, uint32_t, TupleHash> batch_counts;
+		std::set<BatchKey> bk;
 
-		struct DrawBatch
-		{
-			BatchKey key;
-			uint32_t index_offset;
-			uint32_t index_count;
-		};
-
-		std::unordered_map<BatchKey, uint32_t, TupleHash> batch_counts;
 		_scene.registry.view<Mesh, RenderState>().each(
 		  [&](Mesh& m, RenderState& state) {
-			  batch_counts[{
-				  vert.get_id(), frag.get_id(), m.primitive_type, m.dim }]
-				+= m.handle->cpu.indices.size();
+			  bk.insert(state.offsets.indicies.key);
+			  //  batch_counts[{
+			  //   vert.get_id(), frag.get_id(), m.primitive_type, m.dim }]
+			  // += m.handle->cpu.indices.size();
 			  // PERDU_LOG_DEBUG(std::to_string(state.offsets.indicies));
 		  });
 
-		uint32_t index_offset = 0;
-		for (auto& [key, index_count] : batch_counts) {
+		// uint32_t index_offset = 0;
+		for (auto& key : bk) {
+			auto& b									 = _indbatches[key];
 			auto [tvert, tfrag, primitive_type, dim] = key;
 			auto& pipeline							 = _pipelines->get(
 			  _scene.assets.shaders.get(tvert),
@@ -596,10 +704,9 @@ namespace perdu {
 			auto [bufs, _] = get_dim_buffers(dim, 0, 0, 0);
 			SDL_GPUBufferBinding vb{ bufs.output_buffer, 0 };
 			SDL_BindGPUVertexBuffers(_pass, 0, &vb, 1);
-			PERDU_LOG_DEBUG(std::to_string(index_count));
-			SDL_DrawGPUIndexedPrimitives(
-			  _pass, index_count * 3, 1, index_offset, 0, 0);
-			index_offset += index_count;
+			// PERDU_LOG_DEBUG(std::to_string(index_offset));
+			SDL_DrawGPUIndexedPrimitives(_pass, b.count, 1, b.offset, 0, 0);
+			// index_offset += index_count;
 		}
 	}
 
@@ -607,10 +714,10 @@ namespace perdu {
 	void Renderer::end_frame() {
 		if (!_pass || !_cmd) return;
 		SDL_EndGPURenderPass(_pass);
-		SDL_SubmitGPUCommandBuffer(_cmd);
+		_renderfence = SDL_SubmitGPUCommandBufferAndAcquireFence(_cmd);
 		// SDL_WaitForGPUIdle(_ctx.device);
-		_cmd  = nullptr;
-		_pass = nullptr;
+		_cmd		 = nullptr;
+		_pass		 = nullptr;
 	}
 
 	SDL_GPUTransferBuffer* Renderer::get_transfer_buffer(uint32_t size) {
@@ -686,12 +793,12 @@ namespace perdu {
 								  bool					copy,
 								  SDL_GPUCommandBuffer* cmd) {
 		if (required <= size && buf != nullptr) return false;
-		PERDU_LOG_DEBUG("prev required: " + std::to_string(required));
+		// PERDU_LOG_DEBUG("prev required: " + std::to_string(required));
 		required = align_size(required, chunk_size);
-		PERDU_LOG_DEBUG("resize size: "
-						+ std::to_string(required)
-						+ ". actual size: "
-						+ std::to_string(size));
+		// PERDU_LOG_DEBUG("resize size: "
+		// 				+ std::to_string(required)
+		// 				+ ". actual size: "
+		// 				+ std::to_string(size));
 
 		SDL_GPUBufferCreateInfo info{ .usage = usage, .size = required };
 
@@ -709,6 +816,60 @@ namespace perdu {
 		buf	 = nbuf;
 		size = required;
 		return true;
+	}
+
+	RenderOffsets::IndOff Renderer::create_ind_off(uint32_t		   size,
+												   const Material& mat,
+												   PrimitiveType   pt,
+												   uint32_t		   dim) {
+		BatchKey key = { mat.vert.get_id(), mat.frag.get_id(), pt, dim };
+		if (!_indbatches.contains(key)) {
+			_indbatches[key] = { key, _batchoff, 0, _batchchunk };
+			_batchoff		+= _batchchunk;
+		}
+
+		auto&	 b = _indbatches[key];
+		uint32_t c = b.count;
+		b.count	  += size;
+		if (b.count >= b.size) {
+			// Do we move or fragment or move everything else
+			// Not the last one
+			// Fragment or move ourselves?
+			// For now move ourselves
+
+			// PERDU_LOG_WARN("Indbatch oversized pre: offset: "
+			// 			   + std::to_string(_batchoff)
+			// 			   + ". batch offset: "
+			// 			   + std::to_string(b.offset)
+			// 			   + ". size: "
+			// 			   + std::to_string(b.size));
+			uint32_t req = align_size(b.count, _batchchunk);
+			if (_batchoff
+				== b.offset + b.size) { // No more batches after us, just extend
+				// PERDU_LOG_INFO("extending batch");
+				_batchoff += req - b.size;
+				b.size	   = req;
+			} else {
+				_indcopies.push_back({ b.offset, _batchoff, b.size });
+				b.offset   = _batchoff;
+				b.size	   = req;
+				_batchoff += req;
+			}
+			// PERDU_LOG_WARN("Indbatch oversized: "
+			// 			   + std::to_string(req)
+			// 			   + " req. offset: "
+			// 			   + std::to_string(_batchoff)
+			// 			   + ". batch offset: "
+			// 			   + std::to_string(b.offset)
+			// 			   + ". size: "
+			// 			   + std::to_string(b.size));
+		}
+		// PERDU_LOG_DEBUG("indoff to " + std::to_string(c + b.offset));
+		return { key, c };
+	}
+
+	bool MaterialCache::compare(const Material& m) const {
+		return last_vert == m.vert && last_frag == m.frag;
 	}
 
 	// void Renderer::collect_meshes() {
