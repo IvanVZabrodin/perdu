@@ -78,15 +78,18 @@ class MyApp : public perdu::Application {
 
 		perdu::Entity e = scene.vars.set("testentity", scene.create());
 		auto&		  m = e.add<perdu::Mesh>(
-		  // perdu::load_mesh_from_obj(perdu::asset_path("map-bump.obj")));
-		  perdu::make_cube(mdim, 1.0f, perdu::PrimitiveType::Triangles));
+		  perdu::load_mesh_from_obj(perdu::asset_path("bimba.obj")));
+		// perdu::make_cube(mdim, 1.0f, perdu::PrimitiveType::Triangles));
+		PERDU_LOG_DEBUG("loaded");
 		e.add<perdu::Material>(vert, frag);
 		e.add<perdu::Transform>(
 		  perdu::Vectorf{ 0.0f, 0.0f, -3.0f }.extend(mdim));
 		auto h
 		  = scene.assets.meshes.store("hi", perdu::load_mesh(gpu, m), true);
 		m.handle = h;
+		PERDU_LOG_DEBUG("stored");
 		m.recompute();
+		PERDU_LOG_DEBUG("recomputed");
 		scene.vars.set<size_t>("cpos", 0);
 		scene.vars.set<size_t>("crot", 0);
 		scene.vars.set<size_t>("tmin", 1);
@@ -252,10 +255,12 @@ static void inputtest(perdu::Scene& scene, float dt) {
 		t.position[scene.vars.get<size_t>("cpos")] -= movespeed * dt * speedmul;
 	}
 	if (state.is_key_down(perdu::Key::Up)) {
-		t.rotate_plane(scene.vars.get<size_t>("crot"), rotspeed * dt);
+		t.rotate_plane(scene.vars.get<size_t>("crot"),
+					   (rotspeed * dt) / speedmul);
 	}
 	if (state.is_key_down(perdu::Key::Down)) {
-		t.rotate_plane(scene.vars.get<size_t>("crot"), -rotspeed * dt);
+		t.rotate_plane(scene.vars.get<size_t>("crot"),
+					   (-rotspeed * dt) / speedmul);
 	}
 }
 

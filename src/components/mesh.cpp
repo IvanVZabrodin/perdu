@@ -19,9 +19,7 @@ namespace perdu {
 		std::vector<float> flat;
 		flat.reserve(vertices.size() * dim);
 
-		auto i = flat.begin();
-
-		for (auto& v : vertices) flat.insert(i, v.begin(), v.end());
+		for (auto& v : vertices) flat.insert(flat.end(), v.begin(), v.end());
 		cpu.vertices	   = std::move(flat);
 		cpu.primitive_type = primitive_type;
 		cpu.dim			   = dim;
@@ -62,6 +60,8 @@ namespace perdu {
 				inds.push_back(i++);
 			}
 		}
+
+		PERDU_LOG_DEBUG("vertex count: " + std::to_string(verts.size()));
 
 		// for (size_t i = 0; i < attrib.vertices.size(); i += 3) {
 		// 	verts.push_back({ attrib.vertices[i],
