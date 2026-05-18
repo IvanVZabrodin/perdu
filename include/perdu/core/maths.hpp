@@ -210,11 +210,12 @@ namespace perdu {
 			RT theta = angles[plane_index(dim, a, b)];
 			if (transposed) theta = -theta;
 			T c = std::cos(theta), s = std::sin(theta);
-			for (size_t col = 0; col < dim; ++col) {
-				T ra			   = mat[a * dim + col];
-				T rb			   = mat[b * dim + col];
-				mat[a * dim + col] = ra * c - rb * s;
-				mat[b * dim + col] = ra * s + rb * c;
+			for (size_t row = 0; row < dim; ++row) {
+				T ra = mat[row * dim + a];
+				T rb = mat[row * dim + b];
+
+				mat[row * dim + a] = ra * c - rb * s;
+				mat[row * dim + b] = ra * s + rb * c;
 			}
 		}
 
@@ -229,6 +230,7 @@ namespace perdu {
 				res[i * dim + j] = mat[j * dim + i];
 			}
 		}
+		return res;
 	}
 
 	template <typename T>

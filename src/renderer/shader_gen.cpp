@@ -104,37 +104,47 @@ void main() {
     }
 
     // Camera: translate then rotate, using shared memory
-    float rotated[DIM];
-    for (uint i = 0; i < DIM; ++i) {
-        float acc = 0.0;
-        for (uint j = 0; j < DIM; ++j)
-            acc += s_cammat[j * DIM + i] * (rotated1[j] - s_camtran[j]);
-        rotated[i] = acc;
-    }
+	 float rotated[DIM];
+	 for (uint i = 0; i < DIM; ++i) {
+	  float acc = 0.0;
+	  for (uint j = 0; j < DIM; ++j)
+	 	 acc += (rotated1[j] - s_camtran[j]) * s_cammat[j * DIM + i];
+	  rotated[i] = acc;
+	 }
 
     // Iterative perspective projection
     float current[DIM];
     for (uint i = 0; i < DIM; ++i) current[i] = rotated[i];
 
     for (uint d = DIM; d > 2; --d) {
-        float w = e.camera_dist - current[d - 1];
-        if (w < 0.0001) {
-            projected[global_idx] = vec4(0.0, 0.0, -2.0, 0.0);
-            return;
-        }
+        float w = -current[d - 1];
+		 if (w < 0.0001) {
+			projected[global_idx] = vec4(0.5, 0.0, -2.0, 1.0);
+			return;
+		}
         float scale = e.camera_dist / w;
         for (uint i = 0; i < d - 1; ++i)
             current[i] *= scale;
     }
 
-    float w     = e.camera_dist - current[2];
-    float depth = clamp((e.camera_dist / w) * 0.5 + 0.5, 0.0, 1.0);
-	// float off = 0;
-	// if (pc.entity_count > 1) off = entities[1].vertex_offset;
-	current[0] /= pc.aspect;
+	float w = -current[2];
 
-    projected[global_idx] = vec4(current[0], current[1], depth, 0.0);
-}
+	// actual clip — behind camera
+	if (w < 0.0001) {
+		projected[global_idx] = vec4(0.5, 0.0, -2.0f, 1.0); // z > 1 = GPU clips it
+		return;
+	}
+
+	float near  = 0.01;
+	float far   = 100.0;
+	float depth = clamp(1.0 - (w - near) / (far - near), 0.0, 1.0);
+
+	projected[global_idx] = vec4(current[0] / pc.aspect, current[1], depth, entity_idx);
+
+	//	projected[global_idx * 2]     = vec4(current[0] / pc.aspect, current[1], depth, 1.0);
+	//projected[global_idx * 2 + 1] = vec4(rotated[0], rotated[1], rotated[2], 0.0);
+
+	}
 	)";
 
 	static std::vector<uint32_t> compile_projection(uint32_t dim) {
