@@ -1,25 +1,11 @@
-// mesh.frag
 #version 450
-
-layout(location = 0) in  vec4 in_color;
-layout(location = 0) out vec4 out_color;
-
-vec3 face_colors[12] = vec3[](
-    vec3(1.0, 0.0, 0.0),  // red
-    vec3(0.0, 1.0, 0.0),  // green
-    vec3(0.0, 0.0, 1.0),  // blue
-    vec3(1.0, 1.0, 0.0),  // yellow
-    vec3(1.0, 0.0, 1.0),  // magenta
-    vec3(0.0, 1.0, 1.0),  // cyan
-    vec3(1.0, 0.5, 0.0),  // orange
-    vec3(0.5, 0.0, 1.0),  // purple
-    vec3(0.0, 1.0, 0.5),  // mint
-    vec3(1.0, 0.0, 0.5),  // pink
-    vec3(0.5, 1.0, 0.0),  // lime
-    vec3(0.0, 0.5, 1.0)   // sky blue
-);
-
+layout(location = 0) in vec3 frag_pos;
+layout(location = 0) out vec4 out_colour;
 
 void main() {
-	out_color = vec4(0.5, 0.6, 0.7, 1.0);
+    vec3 dx     = dFdx(frag_pos);
+    vec3 dy     = dFdy(frag_pos);
+    vec3 normal = normalize(cross(dx, dy));
+    float light = dot(normal, normalize(vec3(1.0, 2.0, 3.0))) * 0.5 + 0.5;
+    out_colour  = vec4(vec3(light), 1.0);
 }

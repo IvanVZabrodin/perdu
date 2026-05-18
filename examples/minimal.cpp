@@ -78,8 +78,8 @@ class MyApp : public perdu::Application {
 
 		perdu::Entity e = scene.vars.set("testentity", scene.create());
 		auto&		  m = e.add<perdu::Mesh>(
-		  perdu::load_mesh_from_obj(perdu::asset_path("bimba.obj")));
-		// perdu::make_cube(mdim, 1.0f, perdu::PrimitiveType::Triangles));
+		  // perdu::load_mesh_from_obj(perdu::asset_path("bimba.obj")));
+		  perdu::make_cube(mdim, 1.0f, perdu::PrimitiveType::Triangles));
 		PERDU_LOG_DEBUG("loaded");
 		e.add<perdu::Material>(vert, frag);
 		e.add<perdu::Transform>(
@@ -162,14 +162,25 @@ class MyApp : public perdu::Application {
 						auto h			 = scene.assets.meshes.store(
 						  "m" + std::to_string(tmin), l, true);
 						me.handle = h;
-						float z	  = (float) (++tmin) * -3.0f;
+						float z	  = (float) (++tmin) * 3.0f;
 						auto& mat = en.add<perdu::Material>(
 						  scene.assets.shaders.get("triangle.vert"),
-						  tmin % 2
-							? scene.assets.shaders.get("triangle.frag")
-							: scene.assets.shaders.get("triangle2.frag"));
+						  tmin % 2 ? scene.assets.shaders.get("triangle.frag")
+								   : scene.assets.shaders.get("triangle.frag"));
 						auto& tr = en.add<perdu::Transform>(
 						  perdu::Vectorf{ 0.0, 0.0, z }.extend(m.dim));
+						break;
+					}
+				case perdu::Key::L:
+					{
+						auto& t = scene.vars.get<perdu::Entity>("cam")
+									.get<perdu::Transform>();
+						window.set_title(perdu::to_string(t.position));
+						break;
+					}
+				case perdu::Key::O:
+					{
+						renderer.reload_force = true;
 						break;
 					}
 				default: break;
@@ -255,6 +266,8 @@ static void inputtest(perdu::Scene& scene, float dt) {
 		t.position[scene.vars.get<size_t>("cpos")] -= movespeed * dt * speedmul;
 	}
 	if (state.is_key_down(perdu::Key::Up)) {
+		// t.rotation[scene.vars.get<size_t>("crot")]
+		//   += (rotspeed * dt) / speedmul;
 		t.rotate_plane(scene.vars.get<size_t>("crot"),
 					   (rotspeed * dt) / speedmul);
 	}

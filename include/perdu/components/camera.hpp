@@ -4,7 +4,7 @@
 namespace perdu {
 	class Camera {
 	  public:
-		Camera(float fov = 90.0f, float focal = 2.0f);
+		Camera(float fov = 90.0f, float focal = 0.1f);
 
 		void set_fov(float fov) { _fov = fov; }
 

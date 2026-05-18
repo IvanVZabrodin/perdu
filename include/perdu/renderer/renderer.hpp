@@ -3,6 +3,7 @@
 #include "perdu/assets/asset_cache.hpp"
 #include "perdu/components/material.hpp"
 #include "perdu/engine/scene.hpp"
+#include "perdu/renderer/area_manager.hpp"
 #include "perdu/renderer/gpu_context.hpp"
 #include "perdu/renderer/mesh.hpp"
 #include "perdu/renderer/pipeline.hpp"
@@ -63,7 +64,8 @@ namespace perdu {
 	class Renderer {
 	  public:
 		RenderView* view;
-		uint32_t	chunk_size = 1 << 5;
+		uint32_t	chunk_size	 = 1 << 5;
+		bool		reload_force = false;
 
 		explicit Renderer(GPUContext& ctx, Scene& scene);
 		~Renderer();
@@ -106,7 +108,8 @@ namespace perdu {
 		SDL_GPUFence*								_lastfence	 = nullptr;
 		SDL_GPUFence*								_renderfence = nullptr;
 		uint32_t									_batchoff	 = 0;
-		uint32_t									_batchchunk	 = 1 << 10;
+		uint32_t									_batchchunk	 = 1 << 5;
+		AreaManager									_indmanager{ _batchchunk };
 
 		std::vector<std::tuple<uint32_t, uint32_t, uint32_t>> _indcopies;
 
@@ -120,6 +123,8 @@ namespace perdu {
 		};
 
 		std::unordered_map<BatchKey, AllocBatch, TupleHash> _indbatches;
+		std::unordered_map<BatchKey, AreaManager::HandleType, TupleHash>
+		  _indareas;
 
 
 
@@ -156,7 +161,8 @@ namespace perdu {
 		RenderOffsets allocate_for_dim(uint32_t		 dim,
 									   uint32_t		 size,
 									   uint32_t		 indsize,
-									   PrimitiveType pt);
+									   PrimitiveType pt,
+									   bool			 hasm);
 
 		RenderOffsets::IndOff create_ind_off(uint32_t		 size,
 											 const Material& mat,

@@ -1,7 +1,7 @@
 // mesh.frag
 #version 450
 
-layout(location = 0) in  vec4 in_color;
+layout(location = 0) in vec3 frag_pos;
 layout(location = 0) out vec4 out_color;
 
 vec3 face_colors[12] = vec3[](
@@ -21,5 +21,6 @@ vec3 face_colors[12] = vec3[](
 
 
 void main() {
-	out_color = vec4(face_colors[gl_PrimitiveID % 12], 1.0);
+	// out_color = vec4(frag_pos.z, frag_pos.z / 64.0, frag_pos.z / 64.0, 1.0);
+	out_color = vec4(face_colors[int(frag_pos.z) % 12], 1.0);
 }
