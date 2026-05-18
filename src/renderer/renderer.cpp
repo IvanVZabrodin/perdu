@@ -207,13 +207,16 @@ namespace perdu {
 	RenderOffsets Renderer::allocate_for_dim(uint32_t	   dim,
 											 uint32_t	   size,
 											 uint32_t	   indsize,
-											 PrimitiveType pt) {
+											 PrimitiveType pt,
+											 bool		   hasm) {
 		RenderOffsets coff = _dimtooff[dim];
-		coff.indicies	   = create_ind_off(indsize, { vert, frag }, pt, dim);
-		_indoff			  += indsize;
-		_dimtooff[dim]	   = { .vert	  = coff.vert + size,
-							   .transform = coff.transform + dim * (dim + 1),
-							   .entity	  = coff.entity + 1 };
+		coff.indicies
+		  = (hasm ? RenderOffsets::IndOff{ {}, 0 }
+				  : create_ind_off(indsize, { vert, frag }, pt, dim));
+		_indoff		  += indsize;
+		_dimtooff[dim] = { .vert	  = coff.vert + size,
+						   .transform = coff.transform + dim * (dim + 1),
+						   .entity	  = coff.entity + 1 };
 		return coff;
 	}
 
@@ -282,6 +285,7 @@ namespace perdu {
 		// collect_meshes();
 		// collect_transforms();
 		// compute_dispatch();
+		// SDL_WaitForGPUIdle(_ctx.device);
 		if (_prev_resize && _lastfence) {
 			SDL_WaitForGPUFences(_ctx.device, true, &_lastfence, 1);
 			SDL_ReleaseGPUFence(_ctx.device, _lastfence);
@@ -321,6 +325,14 @@ namespace perdu {
 		std::unordered_map<uint32_t, PC>	   uniforms;
 		std::set<uint32_t>					   dims;
 		std::set<uint32_t>					   hmc;
+		std::set<uint32_t>					   hasm;
+
+
+		_scene.registry.view<Mesh, RenderState, Material, MaterialCache>().each(
+		  [&](Mesh&			 m,
+			  RenderState&	 state,
+			  Material&		 material,
+			  MaterialCache& mcache) { hasm.insert(m.handle.get_id()); });
 
 		_scene.registry
 		  .view<Mesh,
@@ -338,10 +350,12 @@ namespace perdu {
 			  dims.insert(m.dim);
 			  if (!state.allocated) { // Allocate stable indices for
 									  // unallocated meshes
-				  state.offsets	  = allocate_for_dim(state.dim,
-													 cpu.vertices.size(),
-													 cpu.indices.size(),
-													 m.primitive_type);
+				  state.offsets
+					= allocate_for_dim(state.dim,
+									   cpu.vertices.size(),
+									   cpu.indices.size(),
+									   m.primitive_type,
+									   hasm.contains(m.handle.get_id()));
 				  state.allocated = true;
 				  state.vcount	  = m.vertices.size();
 				  dirty[state.dim].meshes.push_back(
@@ -356,7 +370,7 @@ namespace perdu {
 				  // 		  + std::to_string(state.offsets.entity)
 				  // 		  + " }");
 				  cpu.dirty = false;
-			  } else if (cpu.dirty) {
+			  } else if (cpu.dirty || reload_force) {
 				  dirty[state.dim].meshes.push_back(
 					{ &m.handle.get(), &state });
 				  cpu.dirty = false;
@@ -369,7 +383,7 @@ namespace perdu {
 				  tcache.last_pos = transform.position;
 				  tcache.last_rot = transform.rotation;
 				  tcache.rotmat
-					= build_rotation_matrix(state.dim, tcache.last_rot);
+					= build_rotation_matrix(state.dim, tcache.last_rot, true);
 				  tcache._dirty = false;
 				  dirty[state.dim].transforms.push_back({ &tcache, &state });
 			  }
@@ -397,16 +411,19 @@ namespace perdu {
 				  material._dirty  = false;
 			  }
 		  });
+
 		Transform&		camt = _scene.registry.get<Transform>(view->camera);
 		TransformCache& camc
 		  = _scene.registry.get<TransformCache>(view->camera);
-		bool camdirty = !camc.compare(camt) || camc._dirty;
+		bool camdirty = !camc.compare(camt) || camc._dirty || reload_force;
 		if (camdirty) {
 			camc.last_pos = camt.position;
 			camc.last_rot = camt.rotation;
 
 			camc._dirty = false;
 		}
+		reload_force = false;
+
 
 		if (dirty.empty() && !camdirty) return;
 		SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(_ctx.device);
@@ -423,12 +440,12 @@ namespace perdu {
 			SDL_GPUCopyPass* pass = SDL_BeginGPUCopyPass(cmd);
 
 			for (auto& [soff, doff, si] : _indcopies) {
-				PERDU_LOG_DEBUG("src: "
-								+ std::to_string(soff)
-								+ ". dst: "
-								+ std::to_string(doff)
-								+ ". size: "
-								+ std::to_string(si));
+				// PERDU_LOG_DEBUG("src: "
+				// 				+ std::to_string(soff)
+				// 				+ ". dst: "
+				// 				+ std::to_string(doff)
+				// 				+ ". size: "
+				// 				+ std::to_string(si));
 				SDL_GPUBufferLocation src{ _inds,
 										   soff * (uint32_t) sizeof(uint32_t) };
 				SDL_GPUBufferLocation dst{ _inds,
@@ -443,6 +460,28 @@ namespace perdu {
 
 		for (auto dim : dims) {
 			auto& dirt = dirty[dim];
+			// for (auto& mesh : dirt.inds) {
+			// 	auto& ioff	= mesh.state->offsets.indicies;
+			// 	auto& batch = _indbatches[ioff.key];
+			// PERDU_LOG_INFO("ind upload: batch.offset="
+			// 			   + std::to_string(batch.offset)
+			// 			   + " ioff.off="
+			// 			   + std::to_string(ioff.off)
+			// 			   + " count="
+			// 			   + std::to_string(mesh.mesh->cpu.indices.size())
+			// 			   + " batch.size="
+			// 			   + std::to_string(batch.size)
+			// 			   + " batch.count="
+			// 			   + std::to_string(batch.count));
+			//
+			// // sanity checks
+			// PERDU_ASSERT(ioff.off + mesh.mesh->cpu.indices.size()
+			// 			   <= batch.size,
+			// 			 "uh oh");
+			// PERDU_ASSERT(batch.offset + batch.size <= _batchoff, "uh oh
+			// 2");
+			// }
+
 			if (!camdirty && dirt.meshes.empty() && dirt.transforms.empty())
 				continue;
 
@@ -481,12 +520,13 @@ namespace perdu {
 
 			SDL_GPUTransferBuffer* tb = get_transfer_buffer(totsize);
 			uint8_t*			   mapped
-			  = (uint8_t*) SDL_MapGPUTransferBuffer(_ctx.device, tb, false);
+			  = (uint8_t*) SDL_MapGPUTransferBuffer(_ctx.device, tb, true);
 
 			if (camdirty) {
 				auto v		= camc.last_pos.extend(dim);
 				auto rotmat = build_rotation_matrix(
 				  dim, camc.last_rot.extend(rotation_planes(dim)), true);
+				// rotmat = transpose(rotmat, dim);
 				memcpy(mapped + coff, rotmat.data(), dim * dim * sizeof(float));
 				copies.push_back({
 					.src = { tb, coff },
@@ -510,7 +550,7 @@ namespace perdu {
 
 				memcpy(mapped + coff,
 					   offsetinds.data(),
-					   cpu.indices.size() * sizeof(uint32_t));
+					   offsetinds.size() * sizeof(uint32_t));
 
 				// PERDU_LOG_DEBUG("indoff: "
 				// 				+ std::to_string(mesh.state->offsets.indicies));
@@ -855,6 +895,8 @@ namespace perdu {
 				b.size	   = req;
 				_batchoff += req;
 			}
+			// PERDU_LOG_DEBUG("Indbatch oversized " +
+			// std::to_string(_batchoff));
 			// PERDU_LOG_WARN("Indbatch oversized: "
 			// 			   + std::to_string(req)
 			// 			   + " req. offset: "

@@ -9,6 +9,7 @@ add_library(perdu_renderer
 			compute.cpp
 			renderview.cpp
 			gpu_context.cpp
+			area_manager.cpp
 )
 add_library(perdu::renderer ALIAS perdu_renderer)
 
