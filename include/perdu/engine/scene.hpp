@@ -61,6 +61,8 @@ namespace perdu {
 		AssetCache	   assets;
 		SceneVars	   vars;
 
+		~Scene() = default;
+
 		Entity create(const EntityDesc& desc);
 		Entity create();
 

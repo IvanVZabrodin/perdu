@@ -43,13 +43,13 @@ namespace perdu {
 		void set_size(uint32_t width, uint32_t height);
 		void set_title(std::string_view title);
 
-		std::pair<uint32_t, uint32_t> get_size() const {
-			return { _wtx.width, _wtx.height };
-		}
+		// std::pair<uint32_t, uint32_t> get_size() const {
+		// 	return { _wtx.width, _wtx.height };
+		// }
 		std::string_view get_title() const { return _title; }
 
-		const WinTarget& wtx() const { return _wtx; }
-		WinTarget&		 wtx() { return _wtx; }
+		// const WinTarget& wtx() const { return _wtx; }
+		// WinTarget&		 wtx() { return _wtx; }
 
 		bool should_close() const { return _should_close; }
 		void update_colour();
@@ -59,7 +59,7 @@ namespace perdu {
 	  private:
 		std::string	  _title;
 		InputHandler& _input;
-		WinTarget	  _wtx;
+		// WinTarget	  _wtx;
 		bool		  _should_close = false;
 	};
 }

@@ -14,13 +14,18 @@ struct SDL_GPUTexture;
 struct SDL_GPUCommandBuffer;
 
 namespace perdu {
-	struct GPUContext
-	{
-		SDL_GPUDevice* device = nullptr;
-
-		GPUContext();
-		~GPUContext();
-	};
+	struct GPUContext;
+	struct CommandPool;
+	struct Swapchain;
+	struct WinContext;
+	struct Semaphore;
+	struct Fence;
+	// {
+	// 	SDL_GPUDevice* device = nullptr;
+	//
+	// 	GPUContext();
+	// 	~GPUContext();
+	// };
 
 	struct GPUTexture
 	{
@@ -30,41 +35,41 @@ namespace perdu {
 		bool valid() const { return texture != nullptr; }
 	};
 
-	struct RenderTarget
-	{
-		GPUContext& ctx;
-		GPUTexture	colour;
-		GPUTexture	depth;
-		uint32_t	width	= 0;
-		uint32_t	height	= 0;
-		bool		is_swap = false;
+	struct RenderTarget;
+	// {
+	// 	GPUContext& ctx;
+	// 	GPUTexture	colour;
+	// 	GPUTexture	depth;
+	// 	uint32_t	width	= 0;
+	// 	uint32_t	height	= 0;
+	// 	bool		is_swap = false;
+	//
+	// 	virtual GPUTexture load_texture(SDL_GPUCommandBuffer* cmd) {
+	// 		return colour;
+	// 	}
+	//
+	// 	void create_depth_texture();
+	// 	void destroy_depth_texture();
+	//
+	// 	RenderTarget(GPUContext& __ctx) : ctx(__ctx) {}
+	// 	~RenderTarget();
+	// };
 
-		virtual GPUTexture load_texture(SDL_GPUCommandBuffer* cmd) {
-			return colour;
-		}
-
-		void create_depth_texture();
-		void destroy_depth_texture();
-
-		RenderTarget(GPUContext& __ctx) : ctx(__ctx) {}
-		~RenderTarget();
-	};
-
-	struct WinTarget : public RenderTarget
-	{
-		SDL_Window* window = nullptr;
-
-		WinTarget(GPUContext& ctx) : RenderTarget(ctx) {}
-
-		GPUTexture load_texture(SDL_GPUCommandBuffer* cmd) {
-			if (window == nullptr) return {};
-			SDL_AcquireGPUSwapchainTexture(
-			  cmd, window, &colour.texture, nullptr, nullptr);
-			colour.format
-			  = SDL_GetGPUSwapchainTextureFormat(ctx.device, window);
-			return colour;
-		}
-	};
+	// struct WinTarget : public RenderTarget
+	// {
+	// 	SDL_Window* window = nullptr;
+	//
+	// 	WinTarget(GPUContext& ctx) : RenderTarget(ctx) {}
+	//
+	// 	GPUTexture load_texture(SDL_GPUCommandBuffer* cmd) {
+	// 		if (window == nullptr) return {};
+	// 		SDL_AcquireGPUSwapchainTexture(
+	// 		  cmd, window, &colour.texture, nullptr, nullptr);
+	// 		colour.format
+	// 		  = SDL_GetGPUSwapchainTextureFormat(ctx.device, window);
+	// 		return colour;
+	// 	}
+	// };
 
 	struct RenderView
 	{

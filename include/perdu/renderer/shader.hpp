@@ -10,7 +10,7 @@ struct SDL_GPUShader;
 
 
 namespace perdu {
-	enum class ShaderStage { Vertex, Fragment };
+	enum class ShaderStage { Vertex, Fragment, Compute };
 
 	struct VertexAttribute
 	{
@@ -38,20 +38,22 @@ namespace perdu {
 				  uint32_t					   samplers);
 	};
 
-	class GPUShader {
-	  public:
-		GPUShader(GPUContext& ctx, const CPUShader& cpu);
-		~GPUShader();
+	struct GPUShader;
 
-		GPUShader(const GPUShader&)			   = delete;
-		GPUShader& operator=(const GPUShader&) = delete;
-
-		SDL_GPUShader* handle() const { return _shader; }
-		bool		   valid() const { return _shader != nullptr; }
-
-	  private:
-		GPUContext&	   _ctx;
-		SDL_GPUShader* _shader;
-	};
+	// class GPUShader {
+	//   public:
+	// 	GPUShader(GPUContext& ctx, const CPUShader& cpu);
+	// 	~GPUShader();
+	//
+	// 	GPUShader(const GPUShader&)			   = delete;
+	// 	GPUShader& operator=(const GPUShader&) = delete;
+	//
+	// 	SDL_GPUShader* handle() const { return _shader; }
+	// 	bool		   valid() const { return _shader != nullptr; }
+	//
+	//   private:
+	// 	GPUContext&	   _ctx;
+	// 	SDL_GPUShader* _shader;
+	// };
 
 }

@@ -1,17 +1,17 @@
 add_executable(perdu_example
-	minimal.cpp
+	vulkantest.cpp
 )
 
 compile_shaders(perdu_example
 	SOURCES	${CMAKE_SOURCE_DIR}/shaders/triangle.vert
 			${CMAKE_SOURCE_DIR}/shaders/triangle.frag
-			${CMAKE_SOURCE_DIR}/shaders/triangle2.frag
+			# ${CMAKE_SOURCE_DIR}/shaders/triangle2.frag
 	OUTPUT_DIR ${CMAKE_BINARY_DIR}/bin/shaders
 )
 
 target_link_libraries(perdu_example
 	PRIVATE	perdu::core
 			perdu::ecs
-			perdu::components
+			# perdu::components
 			perdu::app
 )
