@@ -12,9 +12,17 @@
 #include <string_view>
 
 namespace perdu {
+	struct AppVersion
+	{
+		uint8_t a, b, c;
+	};
+
 	class Application {
 	  public:
-		virtual ~Application() = default;
+		Application(std::string_view appname = "perdu",
+					AppVersion		 version = { 1, 0, 0 });
+
+		virtual ~Application();
 		void run(std::string_view title	 = "perdu",
 				 uint32_t		  width	 = 800,
 				 uint32_t		  height = 600);
@@ -24,21 +32,23 @@ namespace perdu {
 		void set_target_fps(uint32_t target);
 
 	  protected:
-		GPUContext	 gpu{};
+		WinContext*	 wtx;
+		GPUContext*	 gpu;
 		Scene		 scene{};
-		Renderer	 renderer{ gpu, scene };
+		Renderer	 renderer;
 		InputHandler input{ scene.registry };
-		Window		 window{ input, gpu };
-		RenderView	 view{ entt::null, nullptr };
+		// Window		 window;
+		// RenderView	 view{ entt::null, nullptr };
 		Clock		 clock{};
 
 		virtual void on_start() {}
 		virtual void on_stop() {}
 
 	  private:
-		uint32_t debug_frame = 0;
-		float	 debug_dsum	 = 0.0f;
-		float	 debug_dt	 = 0.0f;
-		float	 target_dt	 = 1.0f / 60.0f;
+		uint32_t debug_frame  = 0;
+		bool	 should_close = false;
+		float	 debug_dsum	  = 0.0f;
+		float	 debug_dt	  = 0.0f;
+		float	 target_dt	  = 1.0f / 60.0f;
 	};
 }

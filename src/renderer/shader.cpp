@@ -1,6 +1,8 @@
 #include "renderer/shader.hpp"
 
 #include "perdu/renderer/shader.hpp"
+#include "renderer/gpu_context.hpp"
+#include "vulkan/vulkan.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -8,6 +10,18 @@
 #include <SDL3/SDL_filesystem.h>
 #include <SDL3/SDL_gpu.h>
 #include <vector>
+#include <vulkan/vulkan_raii.hpp>
+
+vk::ShaderStageFlagBits to_vkshaderstage(perdu::ShaderStage stage) {
+	switch (stage) {
+		case perdu::ShaderStage::Vertex:
+			return vk::ShaderStageFlagBits::eVertex;
+		case perdu::ShaderStage::Fragment:
+			return vk::ShaderStageFlagBits::eFragment;
+		case perdu::ShaderStage::Compute:
+			return vk::ShaderStageFlagBits::eCompute;
+	}
+}
 
 namespace perdu {
 
@@ -21,53 +35,68 @@ namespace perdu {
 		return data;
 	}
 
-	SDL_GPUShader* load_sdlshader(SDL_GPUDevice*	 device,
-								  std::string		 path,
-								  SDL_GPUShaderStage stage,
-								  uint32_t			 uniform_buffers,
-								  uint32_t			 storage_buffers,
-								  uint32_t			 samplers) {
+	GPUShader load_shader(GPUContext* ctx,
+						  std::string path,
+						  ShaderStage stage,
+						  uint32_t	  uniform_buffers,
+						  uint32_t	  storage_buffers,
+						  uint32_t	  samplers) {
 		auto code = load_spirv(path);
-		return load_sdlshader_from_code(
-		  device, code, stage, uniform_buffers, storage_buffers, samplers);
+		return load_shader_from_code(
+		  ctx, code, stage, uniform_buffers, storage_buffers, samplers);
 	}
 
-	SDL_GPUShader* load_sdlshader_from_code(SDL_GPUDevice*		 device,
-											std::vector<uint8_t> code,
-											SDL_GPUShaderStage	 stage,
-											uint32_t uniform_buffers,
-											uint32_t storage_buffers,
-											uint32_t samplers) {
-		SDL_GPUShaderCreateInfo info{
-			.code_size			 = code.size(),
-			.code				 = code.data(),
-			.entrypoint			 = "main",
-			.format				 = SDL_GPU_SHADERFORMAT_SPIRV,
-			.stage				 = stage,
-			.num_samplers		 = samplers,
-			.num_storage_buffers = storage_buffers,
-			.num_uniform_buffers = uniform_buffers,
+	GPUShader load_shader_from_code(GPUContext*			 ctx,
+									std::vector<uint8_t> code,
+									ShaderStage			 stage,
+									uint32_t			 uniform_buffers,
+									uint32_t			 storage_buffers,
+									uint32_t			 samplers) {
+		vk::ShaderModuleCreateInfo info{
+			.codeSize = code.size() * sizeof(uint8_t),
+			.pCode	  = reinterpret_cast<const uint32_t*>(code.data()),
+			// .entrypoint			 = "main",
+			// .format				 = SDL_GPU_SHADERFORMAT_SPIRV,
+			// .stage				 = to_vkshaderstage(stage),
+			// .num_samplers		 = samplers,
+			// .num_storage_buffers = storage_buffers,
+			// .num_uniform_buffers = uniform_buffers,
 		};
 
-		SDL_GPUShader* shader = SDL_CreateGPUShader(device, &info);
-		PERDU_ASSERT(shader, "failed to create shader");
-		return shader;
+		vk::raii::ShaderModule shader{ ctx->device, info };
+		// PERDU_ASSERT(shader, "failed to create shader");
+		return { ctx, to_vkshaderstage(stage), std::move(shader) };
 	}
 
-	GPUShader::GPUShader(GPUContext& ctx, const CPUShader& cpu) : _ctx(ctx) {
-		_shader = load_sdlshader_from_code(_ctx.device,
-										   cpu.spirv,
-										   cpu.stage == ShaderStage::Vertex
-											 ? SDL_GPU_SHADERSTAGE_VERTEX
-											 : SDL_GPU_SHADERSTAGE_FRAGMENT,
-										   cpu.uniform_buffers,
-										   cpu.storage_buffers,
-										   cpu.samplers);
+	vk::PipelineShaderStageCreateInfo GPUShader::to_pipelineinfo() const {
+		return { .stage = stage, .module = *shader, .pName = "main" };
 	}
 
-	GPUShader::~GPUShader() {
-		if (_shader) SDL_ReleaseGPUShader(_ctx.device, _shader);
+	GPUShader
+	  load_shader_from_cpushader(GPUContext* ctx, const CPUShader& cpu) {
+		return load_shader_from_code(ctx,
+									 cpu.spirv,
+									 cpu.stage,
+									 cpu.uniform_buffers,
+									 cpu.storage_buffers,
+									 cpu.samplers);
 	}
+
+
+	// GPUShader::GPUShader(GPUContext* ctx, const CPUShader& cpu) : ctx(ctx) {
+	// 	_shader = load_sdlshader_from_code(_ctx.device,
+	// 									   cpu.spirv,
+	// 									   cpu.stage == ShaderStage::Vertex
+	// 										 ? SDL_GPU_SHADERSTAGE_VERTEX
+	// 										 : SDL_GPU_SHADERSTAGE_FRAGMENT,
+	// 									   cpu.uniform_buffers,
+	// 									   cpu.storage_buffers,
+	// 									   cpu.samplers);
+	// }
+	//
+	// GPUShader::~GPUShader() {
+	// 	if (_shader) SDL_ReleaseGPUShader(_ctx.device, _shader);
+	// }
 
 	CPUShader::CPUShader(std::string __path, ShaderStage __stage) :
 		stage(__stage) {

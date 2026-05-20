@@ -6,32 +6,56 @@
 #include "perdu/core/log.hpp"
 #include "perdu/engine/entity.hpp"
 #include "perdu/renderer/gpu_context.hpp"
+#include "renderer/gpu_context.hpp"
 
 #include <chrono>
 #include <cstdint>
+#include <string_view>
 #include <thread>
 
 namespace perdu {
+	Application::Application(std::string_view appname, AppVersion version) :
+		wtx(new WinContext("perdu", 600, 600, {})),
+		gpu(new GPUContext(std::string(appname), version)),
+		renderer(gpu, scene) {}
+	// window(input, *gpu) {}
+
+	Application::~Application() {
+		gpu->device.waitIdle();
+		renderer.~Renderer();
+		scene.~Scene();
+		delete wtx;
+		delete gpu;
+	}
+
 	void Application::run(std::string_view title,
 						  uint32_t		   width,
 						  uint32_t		   height) {
-		window.open(title, width, height);
-		scene.add_ctx<GPUContext*>(&gpu);
+		// window.open(title, width, height);
+		// wtx = new WinContext(gpu, std::string(title), width, height, {});
+		wtx->create_surface(gpu);
+		gpu->pick_physical_device();
+		gpu->create_logical_device();
+		renderer.set_wtx(wtx);
+		scene.add_ctx<GPUContext*>(gpu);
 		scene.add_ctx<InputHandler*>(&input);
 
 		scene.add_ctx<EventBus>();
 
 		PERDU_LOG_INFO("start hook");
 		on_start();
+		renderer.make_pipeline();
 
-		renderer.view = &view;
-		input.bus().subscribe<events::WindowResized>(
-		  [&](const auto& ev) { renderer.on_resize(ev.width, ev.height); });
-		input.register_winexposed_handler([this]() { do_frame(); });
+		// renderer.view = &view;
+		// input.bus().subscribe<events::WindowResized>(
+		//   [&](const auto& ev) { renderer.on_resize(ev.width, ev.height); });
+		input.bus().subscribe<events::WindowQuit>(
+		  [&](const auto& ev) { should_close = true; });
+		// input.register_winexposed_handler([this]() { do_frame(); });
 		PERDU_LOG_INFO("starting mainloop");
 
 		scene.add_ctx<Clock*>(&clock);
-		while (!window.should_close()) do_frame();
+		while (!should_close) do_frame();
 
 		PERDU_LOG_INFO("stop hook");
 		on_stop();
@@ -46,13 +70,14 @@ namespace perdu {
 		scene.update(perdu::Phase::Update, debug_dt);
 		scene.update(perdu::Phase::PostUpdate, debug_dt);
 
-		renderer.prerender();
-		renderer.begin_frame();
+		// renderer.prerender();
+		// renderer.begin_frame();
 		scene.update(perdu::Phase::PreRender, debug_dt);
 		scene.update(perdu::Phase::Render, debug_dt);
-		renderer.render();
+		// renderer.render();
+		renderer.draw();
 		scene.update(perdu::Phase::UI, debug_dt);
-		renderer.end_frame();
+		// renderer.end_frame();
 		scene.update(perdu::Phase::PostRender, debug_dt);
 
 		debug_dt = clock.tick();

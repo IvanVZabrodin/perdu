@@ -4,6 +4,7 @@
 #include "perdu/renderer/mesh.hpp"
 #include "perdu/renderer/shader.hpp"
 
+#include <memory>
 #include <optional>
 
 namespace perdu {
@@ -18,9 +19,9 @@ namespace perdu {
 
 	std::string asset_path(std::string relative);
 
-	using ShaderAsset = Asset<CPUShader, GPUShader>;
-	ShaderAsset* load_shader(GPUContext& ctx, const CPUShader& cpu);
+	using ShaderAsset = Asset<CPUShader, std::shared_ptr<GPUShader>>;
+	ShaderAsset* load_shader(GPUContext* ctx, const CPUShader& cpu);
 
-	using MeshAsset = Asset<CPUMesh, GPUMesh>;
-	MeshAsset* load_mesh(GPUContext& ctx, const Mesh& mesh);
+	using MeshAsset = Asset<CPUMesh, GPUMesh*>;
+	MeshAsset* load_mesh(GPUContext* ctx, const Mesh& mesh);
 }

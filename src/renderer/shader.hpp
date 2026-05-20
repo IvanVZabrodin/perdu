@@ -5,28 +5,40 @@
 #include "perdu/core/assert.hpp"
 #include "perdu/renderer/gpu_context.hpp"
 #include "perdu/renderer/shader.hpp"
+#include "vulkan/vulkan.hpp"
 
 #include <cstdint>
 #include <map>
-#include <SDL3/SDL_gpu.h>
 #include <vector>
+#include <vulkan/vulkan_raii.hpp>
 
 namespace perdu {
 	std::vector<uint8_t> load_spirv(std::string path);
 
-	SDL_GPUShader* load_sdlshader(SDL_GPUDevice*	 device,
-								  std::string		 path,
-								  SDL_GPUShaderStage stage,
-								  uint32_t			 uniform_buffers,
-								  uint32_t			 storage_buffers,
-								  uint32_t			 samplers);
+	struct GPUShader
+	{
+		GPUContext*				ctx;
+		vk::ShaderStageFlagBits stage;
+		vk::raii::ShaderModule	shader;
 
-	SDL_GPUShader* load_sdlshader_from_code(SDL_GPUDevice*		 device,
-											std::vector<uint8_t> code,
-											SDL_GPUShaderStage	 stage,
-											uint32_t uniform_buffers,
-											uint32_t storage_buffers,
-											uint32_t samplers);
+		vk::PipelineShaderStageCreateInfo to_pipelineinfo() const;
+	};
+
+	GPUShader load_shader(GPUContext* ctx,
+						  std::string path,
+						  ShaderStage stage,
+						  uint32_t	  uniform_buffers,
+						  uint32_t	  storage_buffers,
+						  uint32_t	  samplers);
+
+	GPUShader load_shader_from_code(GPUContext*			 ctx,
+									std::vector<uint8_t> code,
+									ShaderStage			 stage,
+									uint32_t			 uniform_buffers,
+									uint32_t			 storage_buffers,
+									uint32_t			 samplers);
+
+	GPUShader load_shader_from_cpushader(GPUContext* ctx, const CPUShader& cpu);
 
 
 	struct CPUCompute
