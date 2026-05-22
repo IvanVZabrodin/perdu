@@ -49,6 +49,6 @@ namespace perdu {
 		bool	 should_close = false;
 		float	 debug_dsum	  = 0.0f;
 		float	 debug_dt	  = 0.0f;
-		float	 target_dt	  = 1.0f / 60.0f;
+		float	 target_dt	  = 0.0f;
 	};
 }

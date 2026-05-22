@@ -116,7 +116,8 @@ namespace perdu {
 		vk::PipelineViewportStateCreateInfo viewportstate{ .viewportCount = 1,
 														   .scissorCount  = 1 };
 
-		vk::PipelineVertexInputStateCreateInfo	 vertinputinfo;
+		vk::PipelineVertexInputStateCreateInfo vertinputinfo;
+
 		vk::PipelineInputAssemblyStateCreateInfo inputassembly{
 			.topology = vk::PrimitiveTopology::eTriangleList
 		};

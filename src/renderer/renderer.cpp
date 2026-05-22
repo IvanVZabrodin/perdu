@@ -92,7 +92,7 @@ namespace perdu {
 	void Renderer::draw() {
 		auto fenceres
 		  = _ctx->device.waitForFences(*_drawfence->fence, true, UINT64_MAX);
-		_ctx->device.resetFences(*_drawfence.get()->fence);
+		_ctx->device.resetFences(*_drawfence->fence);
 		auto [result, image] = _swp->swp.acquireNextImage(
 		  UINT64_MAX, *_presentsem->semaphore, nullptr);
 
