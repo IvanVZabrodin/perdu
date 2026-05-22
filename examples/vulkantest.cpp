@@ -29,6 +29,6 @@ class MyApp : public perdu::Application {
 int main() {
 	perdu::log::set_min_level(perdu::log::Level::Debug);
 	MyApp m{};
-
+	m.set_target_fps(0);
 	m.run();
 }
