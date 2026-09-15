@@ -3,6 +3,7 @@
 #include "perdu/core/assert.hpp"
 #include "perdu/core/log.hpp"
 #include "renderer/gpu_context.hpp"
+#include "vulkan/vulkan.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -18,8 +19,8 @@
 #include <vulkan/vulkan_raii.hpp>
 
 
-const std::vector<const char*> validationLayers
-  = { "VK_LAYER_KHRONOS_validation" };
+const std::vector<const char*> validationLayers = {};
+// = { "VK_LAYER_KHRONOS_validation", "VK_LAYER_PROFILER_unified" };
 
 static bool sdlinit = false;
 
@@ -45,7 +46,6 @@ namespace perdu {
 
 		uint32_t sdlextcount   = 0;
 		auto	 sdlextensions = SDL_Vulkan_GetInstanceExtensions(&sdlextcount);
-		PERDU_LOG_INFO(SDL_GetError());
 
 		auto extprops = context.enumerateInstanceExtensionProperties();
 		for (uint32_t i = 0; i < sdlextcount; ++i) {
@@ -115,7 +115,9 @@ namespace perdu {
 			return;
 		}
 
-		physical_device = best;
+		physical_device					   = best;
+		vk::PhysicalDeviceProperties props = physical_device.getProperties();
+		PERDU_LOG_INFO("using " + std::string(props.deviceName));
 	}
 
 	int GPUContext::device_suitability(const vk::raii::PhysicalDevice& dev) {
@@ -160,13 +162,7 @@ namespace perdu {
 		  = physical_device.getQueueFamilyProperties();
 
 		uint32_t queueIndex = ~0;
-		PERDU_LOG_INFO(std::to_string(qfps.size()));
 		for (uint32_t qfpIndex = 0; qfpIndex < qfps.size(); qfpIndex++) {
-			PERDU_LOG_INFO("instance: "
-						   + std::to_string((size_t) (VkInstance) *instance));
-			PERDU_LOG_INFO(
-			  "physdev:  "
-			  + std::to_string((size_t) (VkPhysicalDevice) *physical_device));
 			if ((qfps[qfpIndex].queueFlags & vk::QueueFlagBits::eGraphics)
 				&& (qfps[qfpIndex].queueFlags & vk::QueueFlagBits::eCompute)
 				&& SDL_Vulkan_GetPresentationSupport(
@@ -241,8 +237,9 @@ namespace perdu {
 		surface = vk::raii::SurfaceKHR(ctx->instance, _surface);
 	}
 
-	Swapchain::Swapchain(WinContext* __wtx, CommandPool* __cmd) :
+	Swapchain::Swapchain(WinContext* __wtx, CommandPool* __cmd, bool vsync) :
 		wtx(__wtx), cmd(__cmd) {
+
 		vk::SurfaceCapabilitiesKHR scap
 		  = wtx->ctx->physical_device.getSurfaceCapabilitiesKHR(*wtx->surface);
 		extent				   = choose_extent(scap);
@@ -266,13 +263,19 @@ namespace perdu {
 			.imageSharingMode = vk::SharingMode::eExclusive,
 			.preTransform	  = scap.currentTransform,
 			.compositeAlpha	  = vk::CompositeAlphaFlagBitsKHR::eOpaque,
-			.presentMode	  = choose_present_mode(availablepresent),
+			.presentMode	  = choose_present_mode(availablepresent, vsync),
 			.clipped		  = true
 		};
 
 		swp	   = vk::raii::SwapchainKHR(wtx->ctx->device, createinfo);
 		images = swp.getImages();
+		PERDU_LOG_DEBUG("using " + std::to_string(images.size()) + " images");
 		create_image_views();
+	}
+
+	Swapchain::~Swapchain() {
+		views.clear();
+		swp = nullptr;
 	}
 
 	vk::SurfaceFormatKHR Swapchain::choose_surface_format(
@@ -286,14 +289,19 @@ namespace perdu {
 	}
 
 	vk::PresentModeKHR Swapchain::choose_present_mode(
-	  const std::vector<vk::PresentModeKHR>& available) {
-		return std::ranges::any_of(available,
-								   [](const vk::PresentModeKHR value) {
-									   return vk::PresentModeKHR::eMailbox
-										   == value;
-								   })
-			   ? vk::PresentModeKHR::eMailbox
-			   : vk::PresentModeKHR::eFifo;
+	  const std::vector<vk::PresentModeKHR>& available,
+	  bool									 vsync) {
+		if (!vsync && std::ranges::any_of(available, [](auto v) {
+				return v == vk::PresentModeKHR::eImmediate;
+			}))
+			return vk::PresentModeKHR::eImmediate;
+
+		if (std::ranges::any_of(available, [](auto v) {
+				return v == vk::PresentModeKHR::eMailbox;
+			}))
+			return vk::PresentModeKHR::eMailbox;
+
+		return vk::PresentModeKHR::eFifo;
 	}
 
 	vk::Extent2D
@@ -323,6 +331,8 @@ namespace perdu {
 		{
 			minImageCount = capabilities.maxImageCount;
 		}
+		PERDU_LOG_DEBUG("using min image count of "
+						+ std::to_string(minImageCount));
 		return minImageCount;
 	}
 
@@ -341,7 +351,8 @@ namespace perdu {
 		}
 	}
 
-	void Swapchain::transition_layout(uint32_t				  index,
+	void Swapchain::transition_layout(uint32_t				  cmdidx,
+									  uint32_t				  index,
 									  vk::ImageLayout		  oldlayout,
 									  vk::ImageLayout		  newlayout,
 									  vk::AccessFlags2		  src_access,
@@ -368,14 +379,16 @@ namespace perdu {
 		vk::DependencyInfo depinfo = { .dependencyFlags			= {},
 									   .imageMemoryBarrierCount = 1,
 									   .pImageMemoryBarriers	= &barrier };
-		cmd->buffers[0].pipelineBarrier2(depinfo);
+		cmd->buffers[cmdidx].pipelineBarrier2(depinfo);
 	}
 
 
-	CommandPool::CommandPool(GPUContext* __ctx, uint32_t bufcount) :
+	CommandPool::CommandPool(GPUContext*				   __ctx,
+							 uint32_t					   bufcount,
+							 vk::CommandPoolCreateFlagBits usage) :
 		ctx(__ctx) {
 		vk::CommandPoolCreateInfo poolinfo{
-			.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+			.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer | usage,
 			.queueFamilyIndex = ctx->gcqueueindex
 		};
 
@@ -388,5 +401,123 @@ namespace perdu {
 		};
 
 		buffers = vk::raii::CommandBuffers(ctx->device, allocinfo);
+	}
+
+	std::vector<vk::raii::CommandBuffer>
+	  CommandPool::quick_create(uint32_t count) {
+		vk::CommandBufferAllocateInfo allocinfo{
+			.commandPool		= *pool,
+			.level				= vk::CommandBufferLevel::ePrimary,
+			.commandBufferCount = count
+		};
+
+		return vk::raii::CommandBuffers(ctx->device, allocinfo);
+	}
+
+	Buffer::Buffer(GPUContext*			   __ctx,
+				   uint32_t				   __size,
+				   vk::BufferUsageFlags	   usage,
+				   vk::MemoryPropertyFlags properties) :
+		ctx(__ctx), size(__size) {
+		vk::BufferCreateInfo createinfo{ .size	= size,
+										 .usage = usage,
+										 .sharingMode
+										 = vk::SharingMode::eExclusive };
+		buffer = vk::raii::Buffer(ctx->device, createinfo);
+		allocate(properties);
+		buffer.bindMemory(*memory, 0);
+	}
+
+	uint32_t
+	  Buffer::find_memory(uint32_t filter, vk::MemoryPropertyFlags properties) {
+		vk::PhysicalDeviceMemoryProperties memprops
+		  = ctx->physical_device.getMemoryProperties();
+
+		for (uint32_t i = 0; i < memprops.memoryTypeCount; ++i) {
+			if ((filter & (1 << i))
+				&& (memprops.memoryTypes[i].propertyFlags & properties)
+					 == properties)
+				return i;
+		}
+
+		PERDU_ASSERT(false, "could not find suitable memory");
+	}
+
+	void Buffer::allocate(vk::MemoryPropertyFlags properties) {
+		vk::MemoryRequirements memreq = buffer.getMemoryRequirements();
+		uint32_t memind = find_memory(memreq.memoryTypeBits,
+									  properties); // TODO: Choose proper
+												   // flags for when no
+												   // read is needed
+
+		vk::MemoryAllocateInfo allocateinfo{ .allocationSize  = memreq.size,
+											 .memoryTypeIndex = memind };
+
+		memory = vk::raii::DeviceMemory(ctx->device, allocateinfo);
+	}
+
+	// template <typename T>
+	// void Buffer::write(const T* data, uint32_t __size, uint32_t offset) {
+	// 	void* bd = memory.mapMemory(offset, __size);
+	// 	memcpy(bd, data, __size);
+	// 	memory.unmapMemory();
+	// }
+
+	Buffer create_staging_buffer(GPUContext*		  ctx,
+								 uint32_t			  size,
+								 bool				  staging,
+								 vk::BufferUsageFlags usage) {
+		if (staging) {
+			return Buffer(
+			  ctx, size, vk::BufferUsageFlagBits::eTransferSrc | usage);
+		} else {
+			return Buffer(ctx,
+						  size,
+						  vk::BufferUsageFlagBits::eTransferDst | usage,
+						  Buffer::GPULocal);
+		}
+	}
+
+	void copy_buffer(CommandPool& cmdpool,
+					 Buffer&	  src,
+					 Buffer&	  dst,
+					 uint32_t	  size) {
+		vk::raii::CommandBuffer cmd
+		  = std::move(cmdpool.quick_create(1).front());
+		cmd.begin({ .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
+
+		cmd.copyBuffer(**src, **dst, vk::BufferCopy(0, 0, size));
+		cmd.end();
+
+		cmdpool.ctx->gcq.submit(
+		  vk::SubmitInfo{ .commandBufferCount = 1, .pCommandBuffers = &*cmd },
+		  nullptr);
+		cmdpool.ctx->gcq.waitIdle();
+	}
+
+	DescriptorPool::DescriptorPool(
+	  GPUContext*						   __ctx,
+	  std::vector<vk::DescriptorSetLayout> layouts) :
+		ctx(__ctx) {
+		vk::DescriptorPoolSize psize{ .type
+									  = vk::DescriptorType::eUniformBuffer,
+									  .descriptorCount
+									  = static_cast<uint32_t>(layouts.size()) };
+		vk::DescriptorPoolCreateInfo pinfo{
+			.flags	 = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+			.maxSets = static_cast<uint32_t>(layouts.size()),
+			.poolSizeCount = 1,
+			.pPoolSizes	   = &psize
+		};
+
+		pool = vk::raii::DescriptorPool(ctx->device, pinfo);
+
+		vk::DescriptorSetAllocateInfo allocinfo{
+			.descriptorPool		= *pool,
+			.descriptorSetCount = static_cast<uint32_t>(layouts.size()),
+			.pSetLayouts		= layouts.data()
+		};
+
+		sets = ctx->device.allocateDescriptorSets(allocinfo);
 	}
 }

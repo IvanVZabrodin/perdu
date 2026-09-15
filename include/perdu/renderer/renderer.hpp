@@ -2,6 +2,7 @@
 
 #include "perdu/assets/asset_cache.hpp"
 // #include "perdu/components/material.hpp"
+#include "perdu/core/maths.hpp"
 #include "perdu/engine/scene.hpp"
 // #include "perdu/renderer/area_manager.hpp"
 #include "perdu/renderer/gpu_context.hpp"
@@ -38,6 +39,13 @@ namespace perdu {
 	class ComputeCache;
 	class Pipeline;
 
+	struct UBO
+	{
+		std::array<float, 4 * 4> model;
+		std::array<float, 4 * 4> view;
+		std::array<float, 4 * 4> proj;
+	};
+
 	using BatchKey = std::tuple<uint32_t, uint32_t, PrimitiveType, uint32_t>;
 	struct RenderOffsets
 	{
@@ -58,9 +66,10 @@ namespace perdu {
 
 	class Renderer {
 	  public:
-		RenderView* view;
-		uint32_t	chunk_size	 = 1 << 5;
-		bool		reload_force = false;
+		static constexpr int max_flight_frames = 3;
+		RenderView*			 view;
+		uint32_t			 chunk_size	  = 1 << 5;
+		bool				 reload_force = false;
 
 		explicit Renderer(GPUContext* ctx,
 						  Scene&	  scene,
@@ -96,15 +105,25 @@ namespace perdu {
 		ShaderHandle vert, frag;
 
 	  private:
-		GPUContext*					 _ctx;
-		WinContext*					 _wtx;
-		Scene&						 _scene;
-		std::unique_ptr<CommandPool> _cmdpool;
-		std::unique_ptr<Pipeline>	 _testpipe;
-		std::unique_ptr<Swapchain>	 _swp;
-		std::unique_ptr<Semaphore>	 _presentsem;
-		std::unique_ptr<Semaphore>	 _rendersem;
-		std::unique_ptr<Fence>		 _drawfence;
+		GPUContext*									_ctx;
+		WinContext*									_wtx;
+		Scene&										_scene;
+		std::unique_ptr<CommandPool>				_cmdpool;
+		std::unique_ptr<DescriptorPool>				_descpool;
+		std::unique_ptr<Pipeline>					_testpipe;
+		std::unique_ptr<Swapchain>					_swp;
+		std::unique_ptr<Semaphore>					_presentsem;
+		std::unique_ptr<Semaphore>					_rendersem;
+		std::unique_ptr<Fence>						_drawfence;
+		std::vector<std::unique_ptr<Semaphore>>		_presentsems;
+		std::vector<std::unique_ptr<Semaphore>>		_rendersems;
+		std::vector<std::unique_ptr<Fence>>			_fences;
+		std::unique_ptr<Buffer>						_vertbuf;
+		std::unique_ptr<Buffer>						_indbuf;
+		std::unique_ptr<Buffer>						_vertstage;
+		std::unique_ptr<Buffer>						_indstage;
+		std::vector<std::unique_ptr<UniformBuffer>> _ubos;
+		uint32_t									_frameidx = 0;
 		// std::unique_ptr<PipelineCache> _pipelines;
 		// std::unique_ptr<ComputeCache>  _computes;
 		// SDL_GPUCommandBuffer*						_cmd;
@@ -124,6 +143,24 @@ namespace perdu {
 		// AreaManager									_indmanager{
 		// _batchchunk
 		// };
+
+		void recreate_swp();
+		void update_ubo(uint32_t image);
+
+		struct Vertex
+		{
+			std::array<float, 2> pos;
+			std::array<float, 3> colour;
+		};
+
+		const std::vector<Vertex> _verts = {
+			{ { -0.5f, -0.5f }, { 1.0f, 0.0f, 0.0f } },
+			{ { 0.5f, -0.5f },  { 0.0f, 1.0f, 0.0f } },
+			{ { 0.5f, 0.5f },	  { 0.0f, 0.0f, 1.0f } },
+			{ { -0.5f, 0.5f },  { 1.0f, 1.0f, 1.0f } }
+		};
+
+		const std::vector<uint16_t> _inds = { 0, 1, 2, 2, 3, 0 };
 
 		std::vector<std::tuple<uint32_t, uint32_t, uint32_t>> _indcopies;
 

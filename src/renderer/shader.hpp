@@ -13,7 +13,9 @@
 #include <vulkan/vulkan_raii.hpp>
 
 namespace perdu {
-	std::vector<uint8_t> load_spirv(std::string path);
+	std::vector<uint8_t>	load_spirv(std::string path);
+	vk::ShaderStageFlagBits to_vkshaderstage(ShaderStage stage);
+
 
 	struct GPUShader
 	{
@@ -24,19 +26,11 @@ namespace perdu {
 		vk::PipelineShaderStageCreateInfo to_pipelineinfo() const;
 	};
 
-	GPUShader load_shader(GPUContext* ctx,
-						  std::string path,
-						  ShaderStage stage,
-						  uint32_t	  uniform_buffers,
-						  uint32_t	  storage_buffers,
-						  uint32_t	  samplers);
+	GPUShader load_shader(GPUContext* ctx, std::string path, ShaderStage stage);
 
 	GPUShader load_shader_from_code(GPUContext*			 ctx,
 									std::vector<uint8_t> code,
-									ShaderStage			 stage,
-									uint32_t			 uniform_buffers,
-									uint32_t			 storage_buffers,
-									uint32_t			 samplers);
+									ShaderStage			 stage);
 
 	GPUShader load_shader_from_cpushader(GPUContext* ctx, const CPUShader& cpu);
 

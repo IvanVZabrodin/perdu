@@ -17,7 +17,7 @@ namespace perdu {
 
 	template <typename T>
 	class Vector {
-	  private:
+	  protected:
 		size_t		   _dim = 0;
 		std::vector<T> _data;
 
@@ -100,7 +100,6 @@ namespace perdu {
 		lhs += rhs;
 		return lhs;
 	}
-
 	template <typename T>
 	Vector<T> operator-(Vector<T> lhs, const Vector<T>& rhs) {
 		lhs -= rhs;
@@ -243,4 +242,10 @@ namespace perdu {
 			return r + (r < 0) * m;
 		};
 	}
+
+	template <typename T, size_t Dim = 2>
+	class Matrix {
+	  public:
+		Matrix();
+	};
 }

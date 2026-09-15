@@ -20,6 +20,9 @@ namespace perdu {
 	struct WinContext;
 	struct Semaphore;
 	struct Fence;
+	struct Buffer;
+	struct UniformBuffer;
+	struct DescriptorPool;
 	// {
 	// 	SDL_GPUDevice* device = nullptr;
 	//

@@ -37,6 +37,11 @@ namespace perdu {
 
 		vk::raii::Pipeline& get() { return _pipeline; }
 
+		std::vector<vk::raii::DescriptorSetLayout>& get_descriptors() {
+			return _descriptors;
+		}
+		vk::raii::PipelineLayout& get_layout() { return _layout; }
+
 	  private:
 		GPUContext*									   _ctx;
 		std::vector<ShaderHandle>					   _shaders;
@@ -44,6 +49,7 @@ namespace perdu {
 		PipelineType								   _type;
 		vk::raii::PipelineLayout					   _layout	 = nullptr;
 		vk::raii::Pipeline							   _pipeline = nullptr;
+		std::vector<vk::raii::DescriptorSetLayout>	   _descriptors;
 
 		void create_graphics_pipeline(const vk::Format* swapchainformat);
 		void create_compute_pipeline();

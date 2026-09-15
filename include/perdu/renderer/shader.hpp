@@ -19,23 +19,29 @@ namespace perdu {
 		uint32_t offset;
 	};
 
+	struct DescriptorBinding
+	{
+		uint32_t set;
+		uint32_t binding;
+		enum class Type { UniformBuffer, StorageBuffer } type;
+		uint32_t count;
+	};
+
 	struct CPUShader
 	{
-		std::vector<uint8_t>		 spirv;
-		ShaderStage					 stage;
-		std::vector<VertexAttribute> attributes		= {};
-		uint32_t					 vertex_strides = 0;
-		uint32_t uniform_buffers = 0, storage_buffers = 0, samplers = 0;
+		std::vector<uint8_t>		   spirv;
+		ShaderStage					   stage;
+		std::vector<VertexAttribute>   attributes	  = {};
+		uint32_t					   vertex_strides = 0;
+		std::vector<DescriptorBinding> bindings		  = {};
 
 		CPUShader(std::string path, ShaderStage stage);
 		CPUShader(std::vector<uint8_t> code, ShaderStage stage);
-		CPUShader(std::vector<uint8_t>		   code,
-				  ShaderStage				   stage,
-				  std::vector<VertexAttribute> attributes,
-				  uint32_t					   strides,
-				  uint32_t					   ubufs,
-				  uint32_t					   sbufs,
-				  uint32_t					   samplers);
+		CPUShader(std::vector<uint8_t>			 code,
+				  ShaderStage					 stage,
+				  std::vector<VertexAttribute>	 attributes,
+				  uint32_t						 strides,
+				  std::vector<DescriptorBinding> bindings);
 	};
 
 	struct GPUShader;

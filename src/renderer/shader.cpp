@@ -1,9 +1,11 @@
 #include "renderer/shader.hpp"
 
+#include "perdu/core/assert.hpp"
 #include "perdu/renderer/shader.hpp"
 #include "renderer/gpu_context.hpp"
 #include "vulkan/vulkan.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -12,19 +14,17 @@
 #include <vector>
 #include <vulkan/vulkan_raii.hpp>
 
-vk::ShaderStageFlagBits to_vkshaderstage(perdu::ShaderStage stage) {
-	switch (stage) {
-		case perdu::ShaderStage::Vertex:
-			return vk::ShaderStageFlagBits::eVertex;
-		case perdu::ShaderStage::Fragment:
-			return vk::ShaderStageFlagBits::eFragment;
-		case perdu::ShaderStage::Compute:
-			return vk::ShaderStageFlagBits::eCompute;
-	}
-}
+
 
 namespace perdu {
-
+	vk::ShaderStageFlagBits to_vkshaderstage(ShaderStage stage) {
+		switch (stage) {
+			case ShaderStage::Vertex: return vk::ShaderStageFlagBits::eVertex;
+			case ShaderStage::Fragment:
+				return vk::ShaderStageFlagBits::eFragment;
+			case ShaderStage::Compute: return vk::ShaderStageFlagBits::eCompute;
+		}
+	}
 	std::vector<uint8_t> load_spirv(std::string path) {
 		std::ifstream file(path, std::ios::binary | std::ios::ate);
 		PERDU_ASSERT(file.is_open(), "failed to open shader file");
@@ -35,23 +35,15 @@ namespace perdu {
 		return data;
 	}
 
-	GPUShader load_shader(GPUContext* ctx,
-						  std::string path,
-						  ShaderStage stage,
-						  uint32_t	  uniform_buffers,
-						  uint32_t	  storage_buffers,
-						  uint32_t	  samplers) {
+	GPUShader
+	  load_shader(GPUContext* ctx, std::string path, ShaderStage stage) {
 		auto code = load_spirv(path);
-		return load_shader_from_code(
-		  ctx, code, stage, uniform_buffers, storage_buffers, samplers);
+		return load_shader_from_code(ctx, code, stage);
 	}
 
 	GPUShader load_shader_from_code(GPUContext*			 ctx,
 									std::vector<uint8_t> code,
-									ShaderStage			 stage,
-									uint32_t			 uniform_buffers,
-									uint32_t			 storage_buffers,
-									uint32_t			 samplers) {
+									ShaderStage			 stage) {
 		vk::ShaderModuleCreateInfo info{
 			.codeSize = code.size() * sizeof(uint8_t),
 			.pCode	  = reinterpret_cast<const uint32_t*>(code.data()),
@@ -74,12 +66,7 @@ namespace perdu {
 
 	GPUShader
 	  load_shader_from_cpushader(GPUContext* ctx, const CPUShader& cpu) {
-		return load_shader_from_code(ctx,
-									 cpu.spirv,
-									 cpu.stage,
-									 cpu.uniform_buffers,
-									 cpu.storage_buffers,
-									 cpu.samplers);
+		return load_shader_from_code(ctx, cpu.spirv, cpu.stage);
 	}
 
 
@@ -109,19 +96,14 @@ namespace perdu {
 		reflect(*this);
 	}
 
-	CPUShader::CPUShader(std::vector<uint8_t>		  __code,
-						 ShaderStage				  __stage,
-						 std::vector<VertexAttribute> __attributes,
-						 uint32_t					  __strides,
-						 uint32_t					  __ubufs,
-						 uint32_t					  __sbufs,
-						 uint32_t					  __samplers) :
+	CPUShader::CPUShader(std::vector<uint8_t>			__code,
+						 ShaderStage					__stage,
+						 std::vector<VertexAttribute>	__attributes,
+						 uint32_t						__strides,
+						 std::vector<DescriptorBinding> __bindings) :
 		spirv(std::move(__code)),
 		stage(__stage),
 		attributes(__attributes),
 		vertex_strides(__strides),
-		uniform_buffers(__ubufs),
-		storage_buffers(__sbufs),
-		samplers(__samplers) {}
-
+		bindings(__bindings) {}
 }

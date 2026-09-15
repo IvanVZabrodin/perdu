@@ -7,7 +7,7 @@ class MyApp : public perdu::Application {
 	void on_start() {
 		auto frag = scene.assets.shaders.store(
 		  "triangle.frag",
-		  perdu::load_shader(gpu,
+		  perdu::load_shader(gpu.get(),
 							 { perdu::asset_path("shaders/triangle.frag.spv"),
 							   perdu::ShaderStage::Fragment }),
 		  true);
@@ -15,7 +15,7 @@ class MyApp : public perdu::Application {
 
 		auto vert = scene.assets.shaders.store(
 		  "triangle.vert",
-		  perdu::load_shader(gpu,
+		  perdu::load_shader(gpu.get(),
 							 {
 								 perdu::asset_path("shaders/triangle.vert.spv"),
 								 perdu::ShaderStage::Vertex,

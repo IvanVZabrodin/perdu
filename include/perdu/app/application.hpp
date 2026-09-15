@@ -9,6 +9,7 @@
 #include "perdu/renderer/renderer.hpp"
 
 #include <cstdint>
+#include <memory>
 #include <string_view>
 
 namespace perdu {
@@ -27,19 +28,19 @@ namespace perdu {
 				 uint32_t		  width	 = 800,
 				 uint32_t		  height = 600);
 
-		void do_frame();
+		inline void do_frame();
 
 		void set_target_fps(uint32_t target);
 
 	  protected:
-		WinContext*	 wtx;
-		GPUContext*	 gpu;
-		Scene		 scene{};
-		Renderer	 renderer;
-		InputHandler input{ scene.registry };
+		std::unique_ptr<GPUContext> gpu;
+		std::unique_ptr<WinContext> wtx;
+		Scene						scene{};
+		Renderer					renderer;
+		InputHandler				input{ scene.registry };
 		// Window		 window;
 		// RenderView	 view{ entt::null, nullptr };
-		Clock		 clock{};
+		Clock						clock{};
 
 		virtual void on_start() {}
 		virtual void on_stop() {}

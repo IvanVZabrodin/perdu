@@ -1,5 +1,6 @@
 #include "renderer/pipeline.hpp"
 
+#include "perdu/core/assert.hpp"
 #include "perdu/core/log.hpp"
 #include "perdu/renderer/gpu_context.hpp"
 #include "perdu/renderer/pipeline.hpp"
@@ -8,6 +9,7 @@
 #include "renderer/shader.hpp"
 #include "vulkan/vulkan.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <SDL3/SDL_gpu.h>
 #include <vector>
@@ -36,6 +38,28 @@ static SDL_GPUPrimitiveType to_sdlprimitive(perdu::PrimitiveType type) {
 			return SDL_GPU_PRIMITIVETYPE_LINELIST;
 		case (perdu::PrimitiveType::Points):
 			return SDL_GPU_PRIMITIVETYPE_POINTLIST;
+	}
+}
+
+vk::Format to_vkformat(perdu::VertexAttribute::Format format) {
+	switch (format) {
+		case perdu::VertexAttribute::Format::Float:
+			return vk::Format::eR32Sfloat;
+		case perdu::VertexAttribute::Format::Float2:
+			return vk::Format::eR32G32Sfloat;
+		case perdu::VertexAttribute::Format::Float3:
+			return vk::Format::eR32G32B32Sfloat;
+		case perdu::VertexAttribute::Format::Float4:
+			return vk::Format::eR32G32B32A32Sfloat;
+	}
+}
+
+vk::DescriptorType to_vkdescriptortype(perdu::DescriptorBinding::Type type) {
+	switch (type) {
+		case perdu::DescriptorBinding::Type::UniformBuffer:
+			return vk::DescriptorType::eUniformBuffer;
+		case perdu::DescriptorBinding::Type::StorageBuffer:
+			return vk::DescriptorType::eStorageBuffer;
 	}
 }
 
@@ -116,7 +140,78 @@ namespace perdu {
 		vk::PipelineViewportStateCreateInfo viewportstate{ .viewportCount = 1,
 														   .scissorCount  = 1 };
 
-		vk::PipelineVertexInputStateCreateInfo vertinputinfo;
+		struct LayoutBindingInfo
+		{
+			vk::DescriptorType	 type;
+			uint32_t			 count;
+			vk::ShaderStageFlags stages;
+		};
+
+		ShaderHandle												 vert;
+		std::vector<std::unordered_map<uint32_t, LayoutBindingInfo>> sets;
+		uint32_t													 maxset = 0;
+
+		for (auto& shader : _shaders) {
+			if (shader->cpu.stage == ShaderStage::Vertex) { vert = shader; }
+
+			auto stage = to_vkshaderstage(shader->cpu.stage);
+
+			for (auto& r : shader->cpu.bindings) {
+				if (sets.size() <= r.set) sets.resize(r.set + 1);
+				auto& binding = sets[r.set][r.binding];
+				maxset		  = std::max(maxset, r.set);
+
+				binding.type	= to_vkdescriptortype(r.type);
+				binding.count	= r.count;
+				binding.stages |= stage;
+			}
+		}
+
+		std::vector<vk::DescriptorSetLayout> descs;
+
+		for (auto& set : sets) {
+			std::vector<vk::DescriptorSetLayoutBinding> bindings;
+
+			for (auto& [idx, info] : set) {
+				bindings.push_back({ .binding		  = idx,
+									 .descriptorType  = info.type,
+									 .descriptorCount = info.count,
+									 .stageFlags	  = info.stages });
+			}
+
+			vk::DescriptorSetLayoutCreateInfo descinfo{
+				.bindingCount = static_cast<uint32_t>(bindings.size()),
+				.pBindings	  = bindings.data()
+			};
+
+			_descriptors.emplace_back(_ctx->device, descinfo);
+			descs.push_back(*_descriptors.back());
+		}
+
+		PERDU_ASSERT(vert.valid(), "could not find vertex shader");
+
+		vk::VertexInputBindingDescription binding{
+			.binding   = 0,
+			.stride	   = vert->cpu.vertex_strides,
+			.inputRate = vk::VertexInputRate::eVertex
+		};
+
+		std::vector<vk::VertexInputAttributeDescription> attrs{};
+		for (auto& attr : vert->cpu.attributes) {
+			attrs.push_back({ .location = attr.location,
+							  .binding	= 0,
+							  .format	= to_vkformat(attr.format),
+							  .offset	= attr.offset });
+		}
+
+
+		vk::PipelineVertexInputStateCreateInfo vertinputinfo{
+			.vertexBindingDescriptionCount = 1,
+			.pVertexBindingDescriptions	   = &binding,
+			.vertexAttributeDescriptionCount
+			= static_cast<uint32_t>(attrs.size()),
+			.pVertexAttributeDescriptions = attrs.data()
+		};
 
 		vk::PipelineInputAssemblyStateCreateInfo inputassembly{
 			.topology = vk::PrimitiveTopology::eTriangleList
@@ -126,7 +221,7 @@ namespace perdu {
 			.depthClampEnable		 = false,
 			.rasterizerDiscardEnable = false,
 			.polygonMode			 = vk::PolygonMode::eFill,
-			.cullMode				 = vk::CullModeFlagBits::eBack,
+			.cullMode				 = vk::CullModeFlagBits::eNone,
 			.frontFace				 = vk::FrontFace::eClockwise,
 			.depthBiasEnable		 = false,
 			.lineWidth				 = 1.0f
@@ -152,8 +247,11 @@ namespace perdu {
 			.pAttachments	 = &colorblendatt
 		};
 
-		vk::PipelineLayoutCreateInfo layoutinfo{ .setLayoutCount		 = 0,
-												 .pushConstantRangeCount = 0 };
+		vk::PipelineLayoutCreateInfo layoutinfo{
+			.setLayoutCount			= static_cast<uint32_t>(descs.size()),
+			.pSetLayouts			= descs.data(),
+			.pushConstantRangeCount = 0
+		};
 
 		_layout = vk::raii::PipelineLayout(_ctx->device, layoutinfo);
 

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <spirv.hpp>
 #include <spirv_cross.hpp>
 #include <utility>
 
@@ -41,6 +42,34 @@ static std::string to_formatstring(perdu::VertexAttribute::Format format) {
 	return "Unsupported";
 }
 
+static std::string to_bindingtypestring(perdu::DescriptorBinding::Type type) {
+	switch (type) {
+		case perdu::DescriptorBinding::Type::UniformBuffer:
+			return "UniformBuffer";
+		case perdu::DescriptorBinding::Type::StorageBuffer:
+			return "StorageBuffer";
+	}
+}
+
+static std::string
+  binding_to_string(std::vector<perdu::DescriptorBinding> bindings,
+					std::string							  pref = "") {
+	std::string res;
+	for (auto& b : bindings) {
+		res += pref
+			 + "{ set: "
+			 + std::to_string(b.set)
+			 + ", binding: "
+			 + std::to_string(b.binding)
+			 + ", count: "
+			 + std::to_string(b.count)
+			 + ", type: "
+			 + to_bindingtypestring(b.type)
+			 + " }\n";
+	}
+	return res;
+}
+
 static std::string attr_to_string(std::vector<perdu::VertexAttribute> attrs,
 								  std::string pref = "") {
 	std::string res{};
@@ -66,6 +95,7 @@ namespace perdu {
 		  reinterpret_cast<const uint32_t*>(cpu.spirv.data()),
 		  cpu.spirv.size() / sizeof(uint32_t));
 		auto res = comp.get_shader_resources();
+		PERDU_LOG_DEBUG("parsed shader as:");
 
 		if (cpu.stage == ShaderStage::Vertex) {
 			std::vector<std::pair<uint32_t, spirv_cross::Resource>>
@@ -89,14 +119,45 @@ namespace perdu {
 				offset += format_size(format);
 			}
 			cpu.vertex_strides = offset;
-			PERDU_LOG_DEBUG("parsed shader as:\n\tstrides: "
-							+ std::to_string(offset)
-							+ "\n\tAttributes:\n"
+			PERDU_LOG_DEBUG("\tstrides: " + std::to_string(offset));
+			PERDU_LOG_DEBUG("\tAttributes:\n"
 							+ attr_to_string(cpu.attributes, "\t\t"));
 		}
 
-		cpu.uniform_buffers = (uint32_t) res.uniform_buffers.size();
-		cpu.storage_buffers = (uint32_t) res.storage_buffers.size();
-		cpu.samplers		= (uint32_t) res.sampled_images.size();
+		std::vector<DescriptorBinding> descbinds;
+
+		auto reflect_resc = [&](const spirv_cross::Resource& resc,
+								DescriptorBinding::Type		 dtype) {
+			DescriptorBinding binding{};
+
+			binding.set
+			  = comp.get_decoration(resc.id, spv::DecorationDescriptorSet);
+
+			binding.binding
+			  = comp.get_decoration(resc.id, spv::DecorationBinding);
+
+			binding.type = dtype;
+
+			auto& type = comp.get_type(resc.type_id);
+
+			binding.count = 1;
+			if (!type.array.empty()) binding.count = type.array[0];
+
+			cpu.bindings.push_back(binding);
+		};
+
+		for (auto& i : res.uniform_buffers)
+			reflect_resc(i, DescriptorBinding::Type::UniformBuffer);
+		for (auto& i : res.storage_buffers)
+			reflect_resc(i, DescriptorBinding::Type::StorageBuffer);
+
+		PERDU_LOG_DEBUG("\tBindings:\n"
+						+ binding_to_string(cpu.bindings, "\t\t"));
 	}
 }
+
+// std::vector<std::pair<uint32_t, spirv_cross::Resource>> sorted_uniforms;
+//
+// for (auto& i : res.uniform_buffers) {
+// 	uint32_t loc = res.
+// }

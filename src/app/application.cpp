@@ -10,22 +10,28 @@
 
 #include <chrono>
 #include <cstdint>
+#include <memory>
+#include <SDL3/SDL_video.h>
 #include <string_view>
 #include <thread>
 
 namespace perdu {
 	Application::Application(std::string_view appname, AppVersion version) :
-		wtx(new WinContext("perdu", 600, 600, {})),
-		gpu(new GPUContext(std::string(appname), version)),
-		renderer(gpu, scene) {}
+		gpu(std::make_unique<GPUContext>(std::string(appname), version)),
+		wtx(std::make_unique<WinContext>(
+		  std::string("perdu"),
+		  600,
+		  600,
+		  SDL_WindowFlags{ SDL_WINDOW_RESIZABLE })),
+		renderer(gpu.get(), scene) {}
 	// window(input, *gpu) {}
 
 	Application::~Application() {
 		gpu->device.waitIdle();
-		renderer.~Renderer();
-		scene.~Scene();
-		delete wtx;
-		delete gpu;
+		// renderer.~Renderer();
+		// scene.~Scene();
+		// delete wtx;
+		// delete gpu;
 	}
 
 	void Application::run(std::string_view title,
@@ -33,11 +39,11 @@ namespace perdu {
 						  uint32_t		   height) {
 		// window.open(title, width, height);
 		// wtx = new WinContext(gpu, std::string(title), width, height, {});
-		wtx->create_surface(gpu);
+		wtx->create_surface(gpu.get());
 		gpu->pick_physical_device();
 		gpu->create_logical_device();
-		renderer.set_wtx(wtx);
-		scene.add_ctx<GPUContext*>(gpu);
+		renderer.set_wtx(wtx.get());
+		scene.add_ctx<GPUContext*>(gpu.get());
 		scene.add_ctx<InputHandler*>(&input);
 
 		scene.add_ctx<EventBus>();
@@ -51,7 +57,7 @@ namespace perdu {
 		//   [&](const auto& ev) { renderer.on_resize(ev.width, ev.height); });
 		input.bus().subscribe<events::WindowQuit>(
 		  [&](const auto& ev) { should_close = true; });
-		// input.register_winexposed_handler([this]() { do_frame(); });
+		input.register_winexposed_handler([this]() { do_frame(); });
 		PERDU_LOG_INFO("starting mainloop");
 
 		scene.add_ctx<Clock*>(&clock);
@@ -61,7 +67,7 @@ namespace perdu {
 		on_stop();
 	}
 
-	void Application::do_frame() {
+	inline void Application::do_frame() {
 		input.poll();
 		input.queue().digest();
 		scene.update(perdu::Phase::Input, debug_dt);
@@ -75,12 +81,18 @@ namespace perdu {
 		scene.update(perdu::Phase::PreRender, debug_dt);
 		scene.update(perdu::Phase::Render, debug_dt);
 		// renderer.render();
+		// float test = clock.elapsed();
 		renderer.draw();
+		// float test2 = clock.elapsed();
 		scene.update(perdu::Phase::UI, debug_dt);
 		// renderer.end_frame();
 		scene.update(perdu::Phase::PostRender, debug_dt);
 
 		debug_dt = clock.tick();
+		// float takeup = (test2 - test) / (debug_dt);
+		// PERDU_LOG_DEBUG("rendering took up "
+		// 				+ std::to_string(takeup * 100)
+		// 				+ "% of the frametime");
 		if (target_dt != 0.0f) {
 			if (debug_dt < target_dt)
 				std::this_thread::sleep_for(
@@ -92,7 +104,7 @@ namespace perdu {
 		if (debug_frame % 60 == 0) {
 			double fps = 1.0f / (debug_dsum / 60.0f);
 			PERDU_LOG_INFO("FPS: " + std::to_string(fps));
-			scene.vars.set("fps", fps);
+			// scene.vars.set("fps", fps);
 			debug_dsum = 0.0f;
 		}
 	}

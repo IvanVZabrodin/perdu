@@ -26,7 +26,7 @@ namespace perdu {
 		template <typename T>
 		T& try_set(std::string_view name, T value) { // TODO: Make efficient
 			auto it = _vars.find(hash(name));
-			if (it == _vars.end()) return std::any_cast<T&>(it->second);
+			if (it != _vars.end()) return std::any_cast<T&>(it->second);
 			_vars[hash(name)] = std::move(value);
 			return std::any_cast<T&>(_vars[hash(name)]);
 		}
@@ -59,7 +59,7 @@ namespace perdu {
 	  public:
 		entt::registry registry;
 		AssetCache	   assets;
-		SceneVars	   vars;
+		// SceneVars	   vars;
 
 		~Scene() = default;
 
