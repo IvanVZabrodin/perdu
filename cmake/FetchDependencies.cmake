@@ -34,6 +34,14 @@ find_or_fetch(EnTT
     GIT_TAG        v3.13.0
 )
 
+FetchContent_Declare(
+	tinyobjloader
+	GIT_REPOSITORY https://github.com/tinyobjloader/tinyobjloader.git
+	GIT_TAG        release
+)
+
+FetchContent_MakeAvailable(tinyobjloader)
+
 # find_or_fetch(spirv-cross
 #     GIT_REPOSITORY https://github.com/KhronosGroup/SPIRV-Cross.git
 #     GIT_TAG        main

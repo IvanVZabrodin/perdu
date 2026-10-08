@@ -13,4 +13,6 @@ target_include_directories(perdu_components
 target_link_libraries(perdu_components
 	PUBLIC	perdu::core
 			perdu::ecs
+
+	PRIVATE tinyobjloader
 )

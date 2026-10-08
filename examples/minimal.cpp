@@ -38,7 +38,7 @@ std::string primitive_to_string(perdu::PrimitiveType p) {
 	}
 }
 
-int mdim = 8;
+int mdim = 4;
 
 class MyApp : public perdu::Application {
 	void on_start() {
