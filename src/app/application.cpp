@@ -42,6 +42,7 @@ namespace perdu {
 		wtx->create_surface(gpu.get());
 		gpu->pick_physical_device();
 		gpu->create_logical_device();
+		gpu->create_allocator();
 		renderer.set_wtx(wtx.get());
 		scene.add_ctx<GPUContext*>(gpu.get());
 		scene.add_ctx<InputHandler*>(&input);

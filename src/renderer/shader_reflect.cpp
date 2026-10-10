@@ -49,6 +49,7 @@ static std::string to_bindingtypestring(perdu::DescriptorBinding::Type type) {
 		case perdu::DescriptorBinding::Type::StorageBuffer:
 			return "StorageBuffer";
 	}
+	return "Unsupported";
 }
 
 static std::string

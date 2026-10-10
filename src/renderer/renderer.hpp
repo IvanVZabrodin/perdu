@@ -44,13 +44,9 @@ namespace perdu {
 
 	struct EntityInfo
 	{
-		uint32_t voff;
-		uint32_t vcount;
-		uint32_t moff;
-		uint32_t poff;
-		float	 camera_dist = 2.0f;
-		uint32_t dim;
-		uint32_t _pad[2];
+		uint32_t mesh_offset;
+		uint32_t mesh_count;
+		uint32_t transform_idx;
 	};
 
 	struct CameraData
@@ -63,5 +59,13 @@ namespace perdu {
 	{
 		float* mat;
 		float* tran;
+	};
+
+	struct DimBuffers
+	{
+		std::vector<std::unique_ptr<Buffer>> transform;
+		std::vector<std::unique_ptr<Buffer>> vertex;
+		std::unique_ptr<Buffer>				 entity;
+		std::unique_ptr<Buffer>				 mesh;
 	};
 }

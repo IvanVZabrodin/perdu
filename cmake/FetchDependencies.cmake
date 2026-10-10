@@ -42,6 +42,14 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(tinyobjloader)
 
+FetchContent_Declare(
+	VulkanMemoryAllocator
+    GIT_REPOSITORY https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
+	GIT_TAG        v3.4.0	
+)
+
+FetchContent_MakeAvailable(VulkanMemoryAllocator)
+
 # find_or_fetch(spirv-cross
 #     GIT_REPOSITORY https://github.com/KhronosGroup/SPIRV-Cross.git
 #     GIT_TAG        main

@@ -1,16 +1,18 @@
 #pragma once
 
 #include "perdu/app/application.hpp"
+#include "perdu/core/log.hpp"
 #include "renderer/gpu_context.hpp"
 #include "vulkan/vulkan.hpp"
 #include "vulkan/vulkan_raii.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <SDL3/SDL_video.h>
 #include <string>
 #include <string_view>
 #include <vector>
-#include <vulkan/vulkan_raii.hpp>
+#include <vk_mem_alloc.h>
 
 namespace perdu {
 	struct GPUContext
@@ -18,6 +20,7 @@ namespace perdu {
 		vk::raii::Context		 context;
 		vk::raii::Instance		 instance		 = nullptr;
 		vk::raii::PhysicalDevice physical_device = nullptr;
+		VmaAllocator			 allocator;
 
 		vk::raii::Device device		  = nullptr;
 		uint32_t		 gcqueueindex = 0;
@@ -34,6 +37,9 @@ namespace perdu {
 		void pick_physical_device();
 		int	 device_suitability(const vk::raii::PhysicalDevice& dev);
 		void create_logical_device();
+		void create_allocator();
+
+		~GPUContext() { vmaDestroyAllocator(allocator); }
 	};
 
 	struct CommandPool
@@ -42,9 +48,10 @@ namespace perdu {
 		vk::raii::CommandPool				 pool = nullptr;
 		std::vector<vk::raii::CommandBuffer> buffers;
 
-		CommandPool(GPUContext*					  ctx,
-					uint32_t					  buffer_count,
-					vk::CommandPoolCreateFlagBits flags = {});
+		CommandPool(GPUContext*				   ctx,
+					uint32_t				   buffer_count,
+					vk::CommandPoolCreateFlags flags
+					= vk::CommandPoolCreateFlagBits::eResetCommandBuffer);
 		std::vector<vk::raii::CommandBuffer> quick_create(uint32_t count);
 	};
 
@@ -105,14 +112,53 @@ namespace perdu {
 
 	struct Semaphore
 	{
+		GPUContext*			ctx;
 		vk::raii::Semaphore semaphore = nullptr;
+		bool				timeline;
 
-		Semaphore(GPUContext* ctx) {
-			semaphore
-			  = vk::raii::Semaphore(ctx->device, vk::SemaphoreCreateInfo{});
+		Semaphore(GPUContext* __ctx,
+				  bool		  __timeline = false,
+				  uint64_t	  initial	 = 0) :
+			ctx(__ctx), timeline(__timeline) {
+			vk::SemaphoreTypeCreateInfo typeinfo{
+				.semaphoreType = __timeline ? vk::SemaphoreType::eTimeline
+											: vk::SemaphoreType::eBinary,
+				.initialValue  = initial
+			};
+
+			vk::SemaphoreCreateInfo cinfo{
+				.sType = vk::StructureType::eSemaphoreCreateInfo,
+				.pNext = &typeinfo
+			};
+
+			semaphore = vk::raii::Semaphore(ctx->device, cinfo);
 		}
 
 		vk::raii::Semaphore& operator*() { return semaphore; }
+	};
+
+	struct TimelineSemaphore : public Semaphore
+	{
+		TimelineSemaphore(GPUContext* ctx, uint64_t initial = 0) :
+			Semaphore(ctx, true, initial) {}
+
+		uint64_t   get_value() const { return semaphore.getCounterValue(); }
+		vk::Result wait(uint64_t target_val, uint64_t timeout = UINT64_MAX) {
+			vk::SemaphoreWaitInfo winfo{ .semaphoreCount = 1,
+										 .pSemaphores	 = &(*semaphore),
+										 .pValues		 = &target_val };
+
+			return ctx->device.waitSemaphores(winfo, timeout);
+		}
+
+		vk::SemaphoreSubmitInfo
+		  gpu_wait(uint64_t				   target_val,
+				   vk::PipelineStageFlags2 mask
+				   = vk::PipelineStageFlagBits2::eAllCommands) const {
+			return { .semaphore = *semaphore,
+					 .value		= target_val,
+					 .stageMask = mask };
+		}
 	};
 
 	struct Fence
@@ -129,11 +175,13 @@ namespace perdu {
 
 	struct Buffer
 	{
-		GPUContext* ctx;
-		uint32_t	size;
+		GPUContext*		  ctx;
+		VmaAllocation	  alloc;
+		VmaAllocationInfo info;
+		uint32_t		  size;
+		bool			  coherent = false;
 
-		vk::raii::Buffer	   buffer = nullptr;
-		vk::raii::DeviceMemory memory = nullptr;
+		vk::Buffer buffer = nullptr;
 
 		static constexpr vk::MemoryPropertyFlags CPUReadable
 		  = vk::MemoryPropertyFlagBits::eHostVisible
@@ -142,23 +190,37 @@ namespace perdu {
 		  = vk::MemoryPropertyFlagBits::eDeviceLocal;
 
 		Buffer() {};
-		Buffer(GPUContext*			   ctx,
-			   uint32_t				   size,
-			   vk::BufferUsageFlags	   usage	  = {},
-			   vk::MemoryPropertyFlags properties = CPUReadable);
-
-		uint32_t
-			 find_memory(uint32_t filter, vk::MemoryPropertyFlags properties);
-		void allocate(vk::MemoryPropertyFlags properties);
+		Buffer(GPUContext*				ctx,
+			   uint32_t					size,
+			   vk::BufferUsageFlags		usage	   = {},
+			   vk::MemoryPropertyFlags	properties = CPUReadable,
+			   VmaAllocationCreateFlags allocation
+			   = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
+			   VmaMemoryUsage memusage = VMA_MEMORY_USAGE_AUTO);
+		virtual ~Buffer();
 
 		virtual void
 		  write(const void* data, uint32_t __size, uint32_t offset = 0) {
-			void* bd = memory.mapMemory(offset, __size);
-			memcpy(bd, data, __size);
-			memory.unmapMemory();
+			void* mapped;
+			if (vmaMapMemory(ctx->allocator, alloc, &mapped) != VK_SUCCESS) {
+				PERDU_LOG_ERROR("failed to map buffer memory");
+				return;
+			}
+			auto* moff = static_cast<std::byte*>(mapped) + offset;
+			memcpy(moff, data, __size);
+
+			flush_if_needed(__size, offset);
+
+			vmaUnmapMemory(ctx->allocator, alloc);
 		}
 
-		vk::raii::Buffer& operator*() { return buffer; }
+		virtual inline void
+		  flush_if_needed(uint32_t __size, uint32_t __offset) {
+			if (!coherent)
+				vmaFlushAllocation(ctx->allocator, alloc, __offset, __size);
+		}
+
+		vk::Buffer& operator*() { return buffer; }
 	};
 
 	struct UniformBuffer : public Buffer
@@ -173,13 +235,74 @@ namespace perdu {
 				   size,
 				   vk::BufferUsageFlagBits::eUniformBuffer | usage,
 				   properties) {
-			data = memory.mapMemory(0, size);
+			if (vmaMapMemory(ctx->allocator, alloc, &data) != VK_SUCCESS) {
+				PERDU_LOG_ERROR("failed to map uniform buffer memory");
+				return;
+			}
 		}
+
+		virtual ~UniformBuffer();
 
 		virtual void
 		  write(const void* __data, uint32_t __size, uint32_t offset = 0) {
-			memcpy(data, __data, __size);
+			auto* moff = static_cast<std::byte*>(data) + offset;
+			memcpy(moff, __data, __size);
+			flush_if_needed(__size, offset);
 		}
+	};
+
+	// The following things need to be supported via the SSBO:
+	// - ring buffer (either by renderer or by the buffer itself)
+	// - copy from staging
+	// - write straight via rebar or just CPUReadable
+	// struct SSBO : public Buffer
+	// {
+	// 	SSBO(GPUContext*			 ctx,
+	// 		 uint32_t				 size,
+	// 		 vk::BufferUsageFlags	 usage		= {},
+	// 		 vk::MemoryPropertyFlags properties = CPUReadable) :
+	// 		Buffer(ctx, size, usage, properties) {}
+	// };
+
+	// staging ring buffer
+	struct SRB : public Buffer
+	{
+		uint8_t* base;
+		uint32_t region_size;
+		uint32_t head  = 0;
+		uint32_t frame = 0;
+
+		struct Slice
+		{
+			void*		 ptr;
+			VkDeviceSize offset;
+		};
+
+		SRB(GPUContext* ctx, uint32_t size) :
+			Buffer(ctx,
+				   size,
+				   vk::BufferUsageFlagBits::eTransferSrc,
+				   {},
+				   VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT
+					 | VMA_ALLOCATION_CREATE_MAPPED_BIT
+					 | VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
+				   VMA_MEMORY_USAGE_AUTO) {
+			base = static_cast<uint8_t*>(info.pMappedData);
+		}
+
+		void begin_frame(uint32_t __frame) {
+			frame = __frame;
+			head  = 0;
+		}
+
+		Slice allocate(uint32_t size, uint32_t align = 16);
+
+		virtual void
+		  write(const void* __data, uint32_t __size, uint32_t offset) {
+			memcpy(base + offset, __data, __size);
+		}
+
+		virtual void flush_if_needed(uint32_t size, uint32_t offset);
 	};
 
 	struct DescriptorPool

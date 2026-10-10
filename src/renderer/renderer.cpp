@@ -5,7 +5,9 @@
 #include "perdu/core/maths.hpp"
 #include "renderer/gpu_context.hpp"
 #include "renderer/pipeline.hpp"
+#include "renderer/renderer.hpp"
 #include "renderer/shader.hpp"
+#include "upload_manager.hpp"
 #include "vulkan/vulkan.hpp"
 
 #include <cstdint>
@@ -23,6 +25,18 @@ void debug_read_matrix(const std::array<float, A * B>& arr) {
 	}
 }
 
+/*
+ * Render pipeline:
+ * - compute shader renders to 3d (not 2d)
+ * - vertex + fragment does the rest normally
+ *
+ * - per dimension:
+ *   - one compute shader
+ *   - one mesh data ssbo
+ *   - one entity ssbo
+ *   -
+ */
+
 namespace perdu {
 	Renderer::Renderer(GPUContext* ctx, Scene& scene, WinContext* wtx) :
 		_ctx(ctx), _wtx(wtx), _scene(scene) {}
@@ -31,8 +45,14 @@ namespace perdu {
 
 	void Renderer::set_wtx(WinContext* wtx) {
 		_wtx = wtx;
-		if (!_cmdpool)
-			_cmdpool = std::make_unique<CommandPool>(_ctx, max_flight_frames);
+		if (!_srbman) _srbman = std::make_unique<UploadManager>(_ctx);
+
+		if (_frameresc.empty()) {
+			for (int i = 0; i < max_flight_frames; ++i) {
+				_frameresc[0].cmdpool = std::make_unique<CommandPool>(
+				  _ctx, 1, vk::CommandPoolCreateFlagBits::eTransient);
+			}
+		}
 
 		_swp	 = std::make_unique<Swapchain>(_wtx, _cmdpool.get());
 		_vertbuf = std::make_unique<Buffer>(
@@ -77,7 +97,7 @@ namespace perdu {
 
 		for (size_t i = 0; i < max_flight_frames; ++i) {
 
-			vk::DescriptorBufferInfo bufinfo{ .buffer = *_ubos[i]->buffer,
+			vk::DescriptorBufferInfo bufinfo{ .buffer = _ubos[i]->buffer,
 											  .offset = 0,
 											  .range  = sizeof(UBO) };
 			vk::WriteDescriptorSet	 descwrite{
@@ -142,8 +162,8 @@ namespace perdu {
 									 1.0f));
 		cmd.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), _swp->extent));
 
-		cmd.bindVertexBuffers(0, ***_vertbuf, { 0 });
-		cmd.bindIndexBuffer(***_indbuf, 0, vk::IndexType::eUint16);
+		cmd.bindVertexBuffers(0, **_vertbuf, { 0 });
+		cmd.bindIndexBuffer(**_indbuf, 0, vk::IndexType::eUint16);
 
 		cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
 							   *_testpipe->get_layout(),
@@ -256,4 +276,16 @@ namespace perdu {
 
 		_ubos[image]->write(&ubo, sizeof(ubo));
 	}
+
+	DimBuffers* Renderer::get_dim_buffers(uint32_t dim,
+										  uint32_t mesh_count,
+										  uint32_t entity_count) {
+		uint32_t mesh_size = mesh_count * dim * sizeof(float);
+		uint32_t transform_size
+		  = entity_count * dim * (dim + 1) * sizeof(float);
+		uint32_t entity_size = entity_count * sizeof(EntityInfo);
+		uint32_t vertex_size = mesh_count * 3 * sizeof(float);
+	}
+
+
 }

@@ -26,4 +26,5 @@ target_link_libraries(perdu_app
 			perdu::renderer
 	PRIVATE SDL3::SDL3
 			Vulkan::Vulkan
+			GPUOpen::VulkanMemoryAllocator
 )

@@ -22,6 +22,8 @@ namespace perdu {
 	struct Fence;
 	struct Buffer;
 	struct UniformBuffer;
+	// struct SSBO;
+	struct SRB;
 	struct DescriptorPool;
 	// {
 	// 	SDL_GPUDevice* device = nullptr;

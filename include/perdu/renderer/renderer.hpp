@@ -35,9 +35,11 @@ struct TupleHash
 };
 
 namespace perdu {
+	struct DimBuffers;
 	class PipelineCache;
 	class ComputeCache;
 	class Pipeline;
+	class UploadManager;
 
 	struct UBO
 	{
@@ -115,6 +117,7 @@ namespace perdu {
 		std::unique_ptr<Semaphore>					_presentsem;
 		std::unique_ptr<Semaphore>					_rendersem;
 		std::unique_ptr<Fence>						_drawfence;
+		std::unique_ptr<UploadManager>				_srbman;
 		std::vector<std::unique_ptr<Semaphore>>		_presentsems;
 		std::vector<std::unique_ptr<Semaphore>>		_rendersems;
 		std::vector<std::unique_ptr<Fence>>			_fences;
@@ -164,7 +167,6 @@ namespace perdu {
 
 		std::vector<std::tuple<uint32_t, uint32_t, uint32_t>> _indcopies;
 
-
 		struct AllocBatch
 		{
 			BatchKey key;
@@ -173,41 +175,25 @@ namespace perdu {
 			uint32_t size;
 		};
 
+		struct FrameRescources
+		{
+			std::unique_ptr<CommandPool> cmdpool;
+		};
+
 		std::unordered_map<BatchKey, AllocBatch, TupleHash> _indbatches;
 		// std::unordered_map<BatchKey, AreaManager::HandleType, TupleHash>
 		// _indareas;
 
 
 
-		struct DimBuffers
-		{
-			SDL_GPUBuffer* entity_buffer	  = nullptr;
-			SDL_GPUBuffer* vertex_buffer	  = nullptr;
-			SDL_GPUBuffer* transform_buffer	  = nullptr;
-			SDL_GPUBuffer* cam_buffer		  = nullptr;
-			SDL_GPUBuffer* output_buffer	  = nullptr;
-			uint32_t	   entity_capacity	  = 0;
-			uint32_t	   vertex_capacity	  = 0;
-			uint32_t	   transform_capacity = 0;
-			uint32_t	   output_capacity	  = 0;
-		};
+		std::unordered_map<uint32_t, DimBuffers>	   _dim_buffers;
+		std::array<FrameRescources, max_flight_frames> _frameresc;
 
-		std::unordered_map<uint32_t, DimBuffers> _dim_buffers;
+		DimBuffers* get_dim_buffers(uint32_t dim,
+									uint32_t mesh_count,
+									uint32_t entity_count);
 
-		SDL_GPUTransferBuffer* get_transfer_buffer(uint32_t size);
-		std::pair<DimBuffers&, bool>
-		  get_dim_buffers(uint32_t				dim,
-						  uint32_t				entsize,
-						  uint32_t				vsize,
-						  uint32_t				tsize,
-						  SDL_GPUCommandBuffer* cmd = nullptr);
-
-		bool ensure_dim_buf(SDL_GPUBuffer*&		  buf,
-							uint32_t&			  size,
-							uint32_t			  required,
-							uint32_t			  usage = (1u << 4),
-							bool				  copy	= false,
-							SDL_GPUCommandBuffer* cmd	= nullptr);
+		bool ensure_dim_buf(Buffer* buf, uint32_t size, bool copy = false);
 
 		RenderOffsets allocate_for_dim(uint32_t		 dim,
 									   uint32_t		 size,

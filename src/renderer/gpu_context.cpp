@@ -1,3 +1,4 @@
+#define VMA_IMPLEMENTATION
 #include "perdu/renderer/gpu_context.hpp"
 
 #include "perdu/core/assert.hpp"
@@ -14,6 +15,7 @@
 #include <SDL3/SDL_video.h>
 #include <SDL3/SDL_vulkan.h>
 #include <string_view>
+#include <vk_mem_alloc.h>
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_core.h>
 #include <vulkan/vulkan_raii.hpp>
@@ -213,6 +215,18 @@ namespace perdu {
 		gcq = vk::raii::Queue(device, gcqueueindex, 0);
 	}
 
+	void GPUContext::create_allocator() {
+		VmaAllocatorCreateInfo info{ .physicalDevice   = *physical_device,
+									 .device		   = *device,
+									 .instance		   = *instance,
+									 .vulkanApiVersion = VK_API_VERSION_1_3 };
+
+		if (vmaCreateAllocator(&info, &allocator) != VK_SUCCESS) {
+			PERDU_LOG_ERROR("failed to create VMA allocator");
+			return;
+		}
+	}
+
 	WinContext::WinContext(std::string	   title,
 						   int			   w,
 						   int			   h,
@@ -383,14 +397,13 @@ namespace perdu {
 	}
 
 
-	CommandPool::CommandPool(GPUContext*				   __ctx,
-							 uint32_t					   bufcount,
-							 vk::CommandPoolCreateFlagBits usage) :
+	CommandPool::CommandPool(GPUContext*				__ctx,
+							 uint32_t					bufcount,
+							 vk::CommandPoolCreateFlags usage) :
 		ctx(__ctx) {
-		vk::CommandPoolCreateInfo poolinfo{
-			.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer | usage,
-			.queueFamilyIndex = ctx->gcqueueindex
-		};
+		vk::CommandPoolCreateInfo poolinfo{ .flags = usage,
+											.queueFamilyIndex
+											= ctx->gcqueueindex };
 
 		pool = vk::raii::CommandPool(ctx->device, poolinfo);
 
@@ -414,54 +427,59 @@ namespace perdu {
 		return vk::raii::CommandBuffers(ctx->device, allocinfo);
 	}
 
-	Buffer::Buffer(GPUContext*			   __ctx,
-				   uint32_t				   __size,
-				   vk::BufferUsageFlags	   usage,
-				   vk::MemoryPropertyFlags properties) :
+	Buffer::Buffer(GPUContext*				__ctx,
+				   uint32_t					__size,
+				   vk::BufferUsageFlags		usage,
+				   vk::MemoryPropertyFlags	properties,
+				   VmaAllocationCreateFlags allocation,
+				   VmaMemoryUsage			memusage) :
 		ctx(__ctx), size(__size) {
-		vk::BufferCreateInfo createinfo{ .size	= size,
-										 .usage = usage,
-										 .sharingMode
-										 = vk::SharingMode::eExclusive };
-		buffer = vk::raii::Buffer(ctx->device, createinfo);
-		allocate(properties);
-		buffer.bindMemory(*memory, 0);
-	}
+		vk::BufferCreateInfo	createinfo{ .size  = __size,
+											.usage = usage,
+											.sharingMode
+											= vk::SharingMode::eExclusive };
+		VmaAllocationCreateInfo allocinfo{
+			.flags = allocation,
+			.usage = memusage,
+		};
 
-	uint32_t
-	  Buffer::find_memory(uint32_t filter, vk::MemoryPropertyFlags properties) {
-		vk::PhysicalDeviceMemoryProperties memprops
-		  = ctx->physical_device.getMemoryProperties();
+		auto	 cinfo = static_cast<VkBufferCreateInfo>(createinfo);
+		VkBuffer buf;
 
-		for (uint32_t i = 0; i < memprops.memoryTypeCount; ++i) {
-			if ((filter & (1 << i))
-				&& (memprops.memoryTypes[i].propertyFlags & properties)
-					 == properties)
-				return i;
+		if (vmaCreateBuffer(
+			  ctx->allocator, &cinfo, &allocinfo, &buf, &alloc, &info)
+			!= VK_SUCCESS)
+		{
+			PERDU_LOG_ERROR("failed to create buffer");
+			return;
 		}
-
-		PERDU_ASSERT(false, "could not find suitable memory");
+		buffer = vk::Buffer(buf);
+		VkMemoryPropertyFlags mflags;
+		vmaGetAllocationMemoryProperties(ctx->allocator, alloc, &mflags);
+		coherent = mflags
+				 & static_cast<unsigned int>(
+					 vk::MemoryPropertyFlagBits::eHostCoherent);
 	}
 
-	void Buffer::allocate(vk::MemoryPropertyFlags properties) {
-		vk::MemoryRequirements memreq = buffer.getMemoryRequirements();
-		uint32_t memind = find_memory(memreq.memoryTypeBits,
-									  properties); // TODO: Choose proper
-												   // flags for when no
-												   // read is needed
-
-		vk::MemoryAllocateInfo allocateinfo{ .allocationSize  = memreq.size,
-											 .memoryTypeIndex = memind };
-
-		memory = vk::raii::DeviceMemory(ctx->device, allocateinfo);
+	Buffer::~Buffer() {
+		vmaDestroyBuffer(ctx->allocator, static_cast<VkBuffer>(buffer), alloc);
 	}
 
-	// template <typename T>
-	// void Buffer::write(const T* data, uint32_t __size, uint32_t offset) {
-	// 	void* bd = memory.mapMemory(offset, __size);
-	// 	memcpy(bd, data, __size);
-	// 	memory.unmapMemory();
-	// }
+	UniformBuffer::~UniformBuffer() {
+		vmaUnmapMemory(ctx->allocator, alloc);
+	}
+
+	SRB::Slice SRB::allocate(uint32_t size, uint32_t align) {
+		uint32_t aligned = (head + align - 1) & ~(align - 1);
+		if (aligned + size > region_size) return { nullptr, 0 };
+		head		 = aligned + size;
+		uint32_t off = frame * region_size + aligned;
+		return { base + off, off };
+	}
+
+	void SRB::flush_if_needed(uint32_t size, uint32_t offset) {
+		if (!coherent) vmaFlushAllocation(ctx->allocator, alloc, offset, size);
+	}
 
 	Buffer create_staging_buffer(GPUContext*		  ctx,
 								 uint32_t			  size,
@@ -486,7 +504,7 @@ namespace perdu {
 		  = std::move(cmdpool.quick_create(1).front());
 		cmd.begin({ .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
 
-		cmd.copyBuffer(**src, **dst, vk::BufferCopy(0, 0, size));
+		cmd.copyBuffer(*src, *dst, vk::BufferCopy(0, 0, size));
 		cmd.end();
 
 		cmdpool.ctx->gcq.submit(

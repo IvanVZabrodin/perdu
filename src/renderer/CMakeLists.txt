@@ -9,6 +9,7 @@ add_library(perdu_renderer
 			# compute.cpp
 			# renderview.cpp
 			gpu_context.cpp
+			upload_manager.cpp
 			# area_manager.cpp
 )
 add_library(perdu::renderer ALIAS perdu_renderer)
@@ -42,4 +43,5 @@ target_link_libraries(perdu_renderer
 			SPIRV-Tools
 			SPIRV-Tools-opt
 			Vulkan::Vulkan
+			GPUOpen::VulkanMemoryAllocator
 )
